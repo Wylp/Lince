@@ -1,0 +1,38 @@
+{
+  "name": "lince",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "format": "prettier --write src tests *.ts *.json src-tauri/*.json src-tauri/capabilities/*.json",
+    "format:check": "prettier --check src tests *.ts *.json src-tauri/*.json src-tauri/capabilities/*.json"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.11.0",
+    "react": "^19.0.0",
+    "react-diff-view": "^3.3.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "prettier": "^3.9.7",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.0",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

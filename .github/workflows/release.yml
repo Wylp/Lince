@@ -1,0 +1,70 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      # Each build merges its platform into the same latest.json asset.
+      max-parallel: 1
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - os: macos-latest
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          - os: ubuntu-22.04
+            args: --bundles appimage
+          - os: windows-latest
+            args: --bundles nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: npm ci
+      - name: Validate release version
+        run: node scripts/check-release.mjs
+      - run: npm test
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Lince v__VERSION__
+          releaseBody: 'Revisão de PRs com contexto. Consulte os requisitos de instalação no README.'
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }}
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release download "$RELEASE_TAG" --pattern latest.json --dir release-check
+      - run: node scripts/check-release.mjs release-check/latest.json
+      - run: echo 'Release draft validated. Review the binaries and publish the draft to enable updates.' >> "$GITHUB_STEP_SUMMARY"

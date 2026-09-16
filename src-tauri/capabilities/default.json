@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Main window lifecycle only; GitHub access stays in Rust.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "updater:default",
+    "process:allow-restart"
+  ]
+}
