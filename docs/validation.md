@@ -1,5 +1,12 @@
 # Validação
 
+## Menus de contexto e decisões de leitura — 18/09/2026
+
+- 50 cenários Playwright passaram no build de produção em Chromium e WebKit, incluindo o fluxo de comentários em lote. Os novos testes cobrem marcação por arquivo/pasta, filtros, árvores de alterações/repositório, atalho Shift+F10, distinção de aprovado sem ler, persistência e invalidação após novo push.
+- 26 testes Rust passaram (2 de rede ignorados), incluindo migração SQLite 4→5, preservação de vistos, contagens separadas no histórico e rollback de decisões contraditórias. Os 13 testes Vitest passaram, incluindo agregação de pastas aninhadas e invalidação de aprovação sem leitura.
+- Clippy, Prettier, build de produção e build Tauri macOS arm64 passaram. Screenshot inspecionado; a inspeção identificou e corrigiu o foco do menu quando todas as ações estão desabilitadas, com teste de Escape acrescentado.
+- Estados de leitura são locais; nenhum comentário ou aprovação real foi publicado. Windows/Linux nativos e interação no WebView nativo continuam sem validação local.
+
 ## Comentários locais por intervalo e envio em lote — 18/09/2026
 
 - 25 testes Rust passaram (2 de rede ignorados), 11 testes Vitest passaram, Clippy com `-D warnings`, Prettier e build de produção passaram. Migração SQLite 3→4, concorrência, congelamento do lote, intervalos e payloads multilinha cobertos.

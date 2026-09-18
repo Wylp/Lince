@@ -8,14 +8,14 @@ O Lince usa SQLite incorporado ao executável, via `rusqlite`/`bundled`. Não pr
 |---|---|
 | `app_state` | Última URL de PR aberta |
 | `reviews` | Identificador `owner/repo#number` e arquivo selecionado |
-| `file_progress` | Caminho, versão do diff, revisado, scroll vertical e horizontal |
+| `file_progress` | Caminho, versão do diff, visto, aprovado sem ler, scroll vertical e horizontal |
 | `review_activity` | Uma sessão por PR/dia, com data da última marcação |
 | `repository_config` | Repositórios configurados como monorepo |
 | `watched_repos` | Repos escolhidos para alertas, por conta, com último número de PR consultado |
 | `review_drafts` | Lote local por PR, snapshot, comentários, revisão de concorrência e estado do envio |
 | `codebases` | Caminhos e nomes dos serviços de cada repo |
 
-O schema é versionado por `PRAGMA user_version` (atualmente 4). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e índices ficam em memória. Os objetos de código também persistem em um **cache Git bare separado**, em `app_cache_dir()/repositories`; não entram no SQLite. Filtros, abas de contexto e texto de comentário ainda não salvo ficam em memória. Rascunhos salvos persistem no SQLite. Veja [cache e retenção de código](code-workspace.md).
+O schema é versionado por `PRAGMA user_version` (atualmente 5). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e índices ficam em memória. Os objetos de código também persistem em um **cache Git bare separado**, em `app_cache_dir()/repositories`; não entram no SQLite. Filtros, abas de contexto e texto de comentário ainda não salvo ficam em memória. Rascunhos salvos persistem no SQLite. Veja [cache e retenção de código](code-workspace.md).
 
 ## Arquivo
 
@@ -48,3 +48,5 @@ O schema 2 migra bancos da versão 1 sem perder progresso e acrescenta históric
 O schema 3 acrescenta `watched_repos`, preservando dados dos schemas anteriores. O histórico é consultado por agregação de `reviews`, `file_progress` e `review_activity`, sem multiplicar contagens por sessão.
 
 O schema 4 acrescenta `review_drafts`, preservando progresso e configurações. Cada lote guarda intervalos, lados e textos junto ao snapshot. Gravações de rascunhos usam transação imediata e revisão otimista: uma janela não sobrescreve silenciosamente os comentários de outra. O estado do envio é persistido antes da requisição e reconciliado por um marcador na revisão do GitHub; veja [comentários](code-workspace.md).
+
+O schema 5 acrescenta `file_progress.approved_unread` com valor inicial falso, sem alterar marcações existentes. `reviewed` e `approved_unread` são mutuamente exclusivos na gravação. O histórico mantém contagens separadas; ambos retiram o arquivo dos pendentes, mas aprovação sem leitura não infla a contagem de arquivos vistos. As duas decisões são invalidadas se a versão do arquivo mudar. Pastas não gravam um estado independente: agregam todos os arquivos alterados descendentes, incluindo os ocultos por filtros.

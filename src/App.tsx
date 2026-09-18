@@ -176,6 +176,9 @@ export default function App() {
   const count = review
     ? Object.values(review.files).filter((f) => f.reviewed).length
     : 0;
+  const approvedUnread = review
+    ? Object.values(review.files).filter((f) => f.approvedUnread).length
+    : 0;
   const total = snapshot?.files.length ?? 0;
 
   return (
@@ -372,14 +375,15 @@ export default function App() {
             </button>
             <div
               className="progress-summary"
-              title={`${count} de ${total} arquivos revisados`}
+              title={`${count} vistos, ${approvedUnread} aprovados sem ler, ${total - count - approvedUnread} pendentes`}
             >
               <span>
                 <strong>{count}</strong> / {total} revisados
+                {approvedUnread > 0 && ` · ${approvedUnread} sem ler`}
               </span>
               <progress
                 aria-label="Progresso da revisão"
-                value={count}
+                value={count + approvedUnread}
                 max={total || 1}
               />
             </div>
@@ -397,22 +401,19 @@ export default function App() {
               review={review}
               loading={loading}
               select={select}
-              mark={(path, value) => {
+              mark={(paths, decision) => {
                 const current = active.current;
-                if (current)
-                  update(
-                    {
-                      ...current.review,
-                      files: {
-                        ...current.review.files,
-                        [path]: {
-                          ...current.review.files[path],
-                          reviewed: value,
-                        },
-                      },
-                    },
-                    true,
-                  );
+                if (!current) return;
+                const files = { ...current.review.files };
+                for (const path of paths) {
+                  if (files[path])
+                    files[path] = {
+                      ...files[path],
+                      reviewed: decision === "viewed",
+                      approvedUnread: decision === "approvedUnread",
+                    };
+                }
+                update({ ...current.review, files }, true);
               }}
               saveScroll={(path, top, left) => {
                 const current = active.current;

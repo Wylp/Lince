@@ -1,3 +1,6 @@
+import { ReviewBadge, contextKey } from "./ReviewState";
+import type { ReviewContextHandler } from "./ReviewState";
+import type { ReviewProgress, ReviewSummary } from "./model";
 import { FileIcon, FolderIcon, Chevron } from "./FileIcon";
 import { useEffect, useMemo, useState } from "react";
 interface Node {
@@ -9,11 +12,17 @@ export function RepositoryTree({
   selected,
   open,
   changed,
+  context,
+  progress,
+  folders,
 }: {
   paths: string[];
   selected: string;
   open: (path: string) => void;
   changed: Set<string>;
+  context: ReviewContextHandler;
+  progress: ReviewProgress;
+  folders: Map<string, ReviewSummary>;
 }) {
   const tree = useMemo(() => {
     const root: Node = { dirs: new Map(), files: [] };
@@ -49,6 +58,8 @@ export function RepositoryTree({
               <button
                 className="directory-item"
                 aria-expanded={expanded.has(path)}
+                onKeyDown={(e) => contextKey(e, path, true, context)}
+                onContextMenu={(e) => context(e, path, true)}
                 onClick={() =>
                   setExpanded((old) => {
                     const next = new Set(old);
@@ -60,6 +71,7 @@ export function RepositoryTree({
                 <Chevron open={expanded.has(path)} />
                 <FolderIcon name={name} open={expanded.has(path)} />
                 <span className="filename">{name}</span>
+                <ReviewBadge summary={folders.get(path)} />
               </button>
               {expanded.has(path) && branch(child, path)}
             </li>
@@ -71,9 +83,12 @@ export function RepositoryTree({
               className={`file-item ${selected === path ? "selected" : ""}`}
               title={path}
               onClick={() => open(path)}
+              onKeyDown={(e) => contextKey(e, path, false, context)}
+              onContextMenu={(e) => context(e, path, false)}
             >
               <FileIcon path={path} />
               <span className="filename">{path.split("/").at(-1)}</span>
+              <ReviewBadge file={progress.files[path]} />
               {changed.has(path) && <span className="green">M</span>}
             </button>
           </li>

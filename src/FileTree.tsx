@@ -1,3 +1,6 @@
+import { ReviewBadge, contextKey } from "./ReviewState";
+import type { ReviewContextHandler } from "./ReviewState";
+import type { ReviewSummary } from "./model";
 import { FileIcon, FolderIcon, Chevron } from "./FileIcon";
 import type { ChangedFile, ReviewProgress } from "./model";
 import { statusLabels } from "./model";
@@ -22,10 +25,14 @@ export function FileTree({
   files,
   progress,
   select,
+  context,
+  folders,
 }: {
   files: ChangedFile[];
   progress: ReviewProgress;
   select: (path: string) => void;
+  context: ReviewContextHandler;
+  folders: Map<string, ReviewSummary>;
 }) {
   function branch(node: Node, prefix = ""): React.ReactNode {
     return (
@@ -33,7 +40,13 @@ export function FileTree({
         {[...node.dirs].map(([dir, child]) => (
           <li key={dir}>
             <details open>
-              <summary title={prefix + dir}>
+              <summary
+                onKeyDown={(e) =>
+                  contextKey(e, prefix + dir + "/", true, context)
+                }
+                title={prefix + dir}
+                onContextMenu={(e) => context(e, prefix + dir + "/", true)}
+              >
                 <Chevron />
                 <span className="folder-closed">
                   <FolderIcon name={dir} />
@@ -42,6 +55,7 @@ export function FileTree({
                   <FolderIcon name={dir} open />
                 </span>
                 <span className="filename">{dir}</span>
+                <ReviewBadge summary={folders.get(prefix + dir + "/")} />
               </summary>
               {branch(child, prefix + dir + "/")}
             </details>
@@ -55,18 +69,13 @@ export function FileTree({
                 progress.selected === file.path ? "true" : undefined
               }
               onClick={() => select(file.path)}
-              title={`${file.path} · ${statusLabels[file.status] ?? file.status}${progress.files[file.path]?.reviewed ? " · Revisado" : ""}`}
+              onKeyDown={(e) => contextKey(e, file.path, false, context)}
+              onContextMenu={(e) => context(e, file.path, false)}
+              title={`${file.path} · ${statusLabels[file.status] ?? file.status}${progress.files[file.path]?.reviewed ? " · Revisado" : progress.files[file.path]?.approvedUnread ? " · Aprovado sem ler" : ""}`}
             >
               <FileIcon path={file.path} />
               <span className="filename">{file.path.split("/").at(-1)}</span>
-              <span
-                className={`file-state ${progress.files[file.path]?.reviewed ? "done" : ""}`}
-                aria-label={
-                  progress.files[file.path]?.reviewed ? "Revisado" : "Pendente"
-                }
-              >
-                {progress.files[file.path]?.reviewed ? "✓" : ""}
-              </span>
+              <ReviewBadge file={progress.files[file.path]} />
               <span
                 className={`status-letter ${file.status}`}
                 aria-label={statusLabels[file.status] ?? file.status}

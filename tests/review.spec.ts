@@ -1329,3 +1329,107 @@ test("draft save failures preserve text and outdated drafts remain local", async
     [],
   );
 });
+
+test("context menus mark files and whole folders independently of filters", async ({
+  page,
+}) => {
+  await open(page);
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  const controller = tree.getByRole("button", { name: /controller.ts/ });
+  await controller.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Marcar como visto", exact: false })
+    .click();
+  await expect(
+    controller.getByLabel("Revisado", { exact: true }),
+  ).toBeVisible();
+  const folder = tree.locator('summary[title="src"]');
+  await expect(folder).not.toContainText("✓");
+  await page.getByLabel("Filtrar arquivos").fill("controller");
+  await folder.click({ button: "right" });
+  await expect(page.getByRole("menu")).toContainText("2 arquivos alterados");
+  await page.getByRole("menuitem", { name: /Marcar como visto/ }).click();
+  await expect(folder.getByLabel(/Pasta vista/)).toBeVisible();
+  await page.getByLabel("Filtrar arquivos").fill("");
+  await expect(
+    tree
+      .getByRole("button", { name: /service.ts/ })
+      .getByLabel("Revisado", { exact: true }),
+  ).toBeVisible();
+  await folder.click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Marcar como pendente/ }).click();
+  await expect(folder).toContainText("0/2");
+  await tree
+    .getByRole("button", { name: /image.png/ })
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: /Marcar como visto/ }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+});
+
+test("approved unread stays distinct, persists and resets after a new push", async ({
+  page,
+}) => {
+  await open(page);
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await tree
+    .getByRole("button", { name: /controller.ts/ })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Marcar como visto/ }).click();
+  const service = tree.getByRole("button", { name: /service.ts/ });
+  await service.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: /Aprovado sem ler/ }).click();
+  await expect(
+    service.getByLabel("Aprovado sem ler", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    tree
+      .locator('summary[title="src"]')
+      .getByLabel(/concluída com arquivos não lidos/),
+  ).toBeVisible();
+  await expect(page.locator(".progress-summary")).toContainText("1 sem ler");
+  await page.getByLabel("Apenas pendentes").check();
+  await expect(service).toHaveCount(0);
+  await expect(tree.getByRole("button", { name: /controller.ts/ })).toHaveCount(
+    0,
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
+  await expect(
+    service.getByLabel("Aprovado sem ler", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).newPush = true;
+  });
+  await page.getByRole("button", { name: "Abrir PR" }).click();
+  await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
+  await expect(service.getByLabel("Pendente", { exact: true })).toBeAttached();
+  await expect(page.locator(".progress-summary")).not.toContainText("sem ler");
+});
+
+test("repository explorer shares folder review state and keeps unchanged files out", async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole("button", { name: "Explorador", exact: true }).click();
+  const tree = page.getByRole("navigation", {
+    name: "Arquivos do repositório",
+  });
+  const folder = tree.getByRole("button", { name: /^src/ }).first();
+  await folder.click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Marcar como visto/ }).click();
+  await expect(folder.getByLabel(/Pasta vista/)).toBeVisible();
+  await tree
+    .getByRole("button", { name: "utils.ts", exact: true })
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: /Aprovado sem ler/ }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.screenshot({
+    path: `test-results/folder-state-${test.info().project.name}.png`,
+  });
+});

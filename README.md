@@ -37,6 +37,8 @@ Consulte a [lista oficial do Tauri](https://tauri.app/start/prerequisites/) para
 
 O workspace usa Monaco, com código **somente leitura**, diff lado a lado, abas e explorador recolhível que abre por hover/foco e pode ser fixado. O cabeçalho compacto prioriza a área de código. Cmd/Ctrl+P abre arquivos; Cmd/Ctrl+click ou F12 navega para definições JS/TS, inclusive fora do diff; Alt+F12 mostra um preview. Python, Java, C#, Go, Rust, C, C++ e PHP também têm previews de declarações candidatas por análise sintática, sem exigir servidores externos. Clique no + de uma linha ou arraste para comentar um intervalo. Os rascunhos persistem no SQLite; confira e edite em **Comentários (N)** e publique uma única revisão com **Aplicar tudo**. Nada é enviado ao salvar o rascunho.
 
+Clique com o botão direito nos arquivos/pastas para marcar como visto ou pendente. Arquivos também aceitam **Aprovado sem ler**, separado da leitura e guardado no SQLite para o resumo futuro. As pastas mostram automaticamente o progresso de todos os arquivos alterados abaixo delas; aprovações sem leitura têm indicador próprio.
+
 O Lince mantém um cache Git próprio dos commits, sem alterar seu checkout. A navegação JS/TS carrega as dependências do arquivo consultado sob demanda, separando base e head; não pré-indexa o monorepo inteiro. As árvores usam ícones locais do Material Icon Theme. **Atualizar PR** busca novos commits. Código permanece nesse cache em disco; progresso continua no SQLite. [Atalhos, cache e limites por linguagem](docs/code-workspace.md).
 
 ## Listar PRs e configurar monorepos
@@ -69,7 +71,7 @@ cargo test --manifest-path src-tauri/Cargo.toml live_public_pr -- --ignored --no
 
 ## Limites desta entrega
 
-PRs com mais de 3.000 arquivos não são abertas. Binários, LFS, submódulos, links simbólicos, conteúdo não UTF-8 e arquivos acima dos limites documentados ficam indisponíveis e não podem ser marcados como revisados. Patches truncados da API não são usados: o diff é calculado sobre blobs completos e SHAs fixos. Use uma única instância do Lince por vez.
+PRs com mais de 3.000 arquivos não são abertas. Binários, LFS, submódulos, links simbólicos, conteúdo não UTF-8 e arquivos acima dos limites documentados ficam indisponíveis e não podem ser marcados como vistos. A decisão explícita “Aprovado sem ler” continua disponível e não representa leitura do conteúdo. Patches truncados da API não são usados: o diff é calculado sobre blobs completos e SHAs fixos. Use uma única instância do Lince por vez.
 
 As seções abaixo preservam o contexto e o direcionamento original do projeto. Detalhes da implementação atual estão em [architecture.md](docs/architecture.md).
 

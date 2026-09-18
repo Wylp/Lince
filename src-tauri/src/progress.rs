@@ -7,6 +7,8 @@ use std::{collections::BTreeMap, path::Path, time::Duration};
 pub struct FileProgress {
     pub version: String,
     pub reviewed: bool,
+    #[serde(default)]
+    pub approved_unread: bool,
     pub top: f64,
     pub left: f64,
 }
@@ -33,7 +35,7 @@ impl Default for Store {
 }
 
 pub(crate) type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
-const SCHEMA: u32 = 4;
+const SCHEMA: u32 = 5;
 
 fn legacy(path: &Path) -> DbResult<Store> {
     match std::fs::read(path) {
@@ -83,6 +85,7 @@ pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
                 review_key TEXT NOT NULL REFERENCES reviews(review_key) ON DELETE CASCADE,
                 path TEXT NOT NULL, version TEXT NOT NULL,
                 reviewed INTEGER NOT NULL CHECK(reviewed IN (0,1)),
+                approved_unread INTEGER NOT NULL DEFAULT 0 CHECK(approved_unread IN (0,1)),
                 scroll_top REAL NOT NULL CHECK(scroll_top >= 0),
                 scroll_left REAL NOT NULL CHECK(scroll_left >= 0),
                 PRIMARY KEY(review_key, path)
@@ -115,6 +118,12 @@ pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
         if locked_version < 4 {
             tx.execute_batch("CREATE TABLE IF NOT EXISTS review_drafts(review_key TEXT PRIMARY KEY NOT NULL,payload TEXT NOT NULL);")?;
         }
+        if locked_version > 0 && locked_version < 5 {
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('file_progress') WHERE name='approved_unread')", [], |r| r.get(0))?;
+            if !exists {
+                tx.execute_batch("ALTER TABLE file_progress ADD COLUMN approved_unread INTEGER NOT NULL DEFAULT 0 CHECK(approved_unread IN (0,1));")?;
+            }
+        }
         tx.pragma_update(None, "user_version", SCHEMA)?;
         tx.commit()?;
     }
@@ -137,15 +146,20 @@ fn write_review(tx: &Transaction<'_>, key: &str, review: &ReviewProgress) -> DbR
         params![key, review.selected],
     )?;
     {
-        let mut upsert = tx.prepare_cached("INSERT INTO file_progress(review_key,path,version,reviewed,scroll_top,scroll_left)
-            VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(review_key,path) DO UPDATE SET
-            version=excluded.version,reviewed=excluded.reviewed,scroll_top=excluded.scroll_top,scroll_left=excluded.scroll_left
-            WHERE version != excluded.version OR reviewed != excluded.reviewed
+        let mut upsert = tx.prepare_cached("INSERT INTO file_progress(review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread)
+            VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(review_key,path) DO UPDATE SET
+            version=excluded.version,reviewed=excluded.reviewed,scroll_top=excluded.scroll_top,scroll_left=excluded.scroll_left,approved_unread=excluded.approved_unread
+            WHERE version != excluded.version OR reviewed != excluded.reviewed OR approved_unread != excluded.approved_unread
                 OR scroll_top != excluded.scroll_top OR scroll_left != excluded.scroll_left")?;
         for (path, file) in &review.files {
             if !file.top.is_finite() || !file.left.is_finite() || file.top < 0.0 || file.left < 0.0
             {
                 return Err("Posição de leitura inválida.".into());
+            }
+            if file.reviewed && file.approved_unread {
+                return Err(
+                    "Um arquivo não pode estar visto e aprovado sem leitura ao mesmo tempo.".into(),
+                );
             }
             upsert.execute(params![
                 key,
@@ -153,7 +167,8 @@ fn write_review(tx: &Transaction<'_>, key: &str, review: &ReviewProgress) -> DbR
                 file.version,
                 file.reviewed,
                 file.top,
-                file.left
+                file.left,
+                file.approved_unread
             ])?;
         }
     }
@@ -204,7 +219,7 @@ pub fn load(path: &Path) -> Result<Store, String> {
                 );
             }
             let mut statement = tx.prepare(
-                "SELECT review_key,path,version,reviewed,scroll_top,scroll_left FROM file_progress",
+                "SELECT review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread FROM file_progress",
             )?;
             for row in statement.query_map([], |r| {
                 Ok((
@@ -215,6 +230,7 @@ pub fn load(path: &Path) -> Result<Store, String> {
                         reviewed: r.get(3)?,
                         top: r.get(4)?,
                         left: r.get(5)?,
+                        approved_unread: r.get(6)?,
                     },
                 ))
             })? {
@@ -411,6 +427,7 @@ mod tests {
                 FileProgress {
                     version: "v1".into(),
                     reviewed: true,
+                    approved_unread: false,
                     top: 321.5,
                     left: 12.0,
                 },
@@ -514,6 +531,7 @@ mod discovery_storage_tests {
                 FileProgress {
                     version: "v1".into(),
                     reviewed: false,
+                    approved_unread: false,
                     top: 0.0,
                     left: 0.0,
                 },
@@ -583,6 +601,7 @@ mod discovery_storage_tests {
 pub struct ReviewHistory {
     pub key: String,
     pub reviewed: i64,
+    pub approved_unread: i64,
     pub total: i64,
     pub last_reviewed_at: Option<i64>,
 }
@@ -592,9 +611,9 @@ pub fn review_history(path: &Path) -> Result<Vec<ReviewHistory>, String> {
         let conn = connect(path)?;
         let mut query = conn.prepare(
             "SELECT r.review_key,
-            COALESCE(f.reviewed,0),COALESCE(f.total,0),NULLIF(a.last_reviewed_at,0)
+            COALESCE(f.reviewed,0),COALESCE(f.total,0),NULLIF(a.last_reviewed_at,0),COALESCE(f.approved_unread,0)
             FROM reviews r
-            LEFT JOIN (SELECT review_key,SUM(reviewed) reviewed,COUNT(*) total
+            LEFT JOIN (SELECT review_key,SUM(reviewed) reviewed,COUNT(*) total,SUM(approved_unread) approved_unread
                 FROM file_progress GROUP BY review_key) f USING(review_key)
             LEFT JOIN (SELECT review_key,MAX(last_reviewed_at) last_reviewed_at
                 FROM review_activity GROUP BY review_key) a USING(review_key)
@@ -607,6 +626,7 @@ pub fn review_history(path: &Path) -> Result<Vec<ReviewHistory>, String> {
                     reviewed: r.get(1)?,
                     total: r.get(2)?,
                     last_reviewed_at: r.get(3)?,
+                    approved_unread: r.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -681,5 +701,67 @@ mod history_tests {
         assert_eq!((rows[0].reviewed, rows[0].total), (1, 1));
         assert!(rows[0].last_reviewed_at.unwrap() > 1);
         assert_eq!(rows[1].total, 0);
+    }
+}
+
+#[cfg(test)]
+mod decision_tests {
+    use super::*;
+    #[test]
+    fn v4_migration_preserves_seen_files_and_stores_unread_approval_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("progress.sqlite3");
+        let mut review = ReviewProgress {
+            selected: "test/e2e.ts".into(),
+            files: BTreeMap::from([
+                (
+                    "src/main.ts".into(),
+                    FileProgress {
+                        version: "v1".into(),
+                        reviewed: true,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "test/e2e.ts".into(),
+                    FileProgress {
+                        version: "v1".into(),
+                        top: 120.0,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        };
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        let conn = connect(&path).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE file_progress DROP COLUMN approved_unread; PRAGMA user_version=4;",
+        )
+        .unwrap();
+        drop(conn);
+        let migrated = load(&path).unwrap();
+        assert!(migrated.reviews["org/repo#1"].files["src/main.ts"].reviewed);
+        assert!(!migrated.reviews["org/repo#1"].files["test/e2e.ts"].approved_unread);
+        review.files.get_mut("test/e2e.ts").unwrap().approved_unread = true;
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        let loaded = load(&path).unwrap();
+        let state = &loaded.reviews["org/repo#1"].files["test/e2e.ts"];
+        assert!(state.approved_unread);
+        assert!(!state.reviewed);
+        assert_eq!(state.top, 120.0);
+        let history = review_history(&path).unwrap();
+        assert_eq!(
+            (
+                history[0].reviewed,
+                history[0].approved_unread,
+                history[0].total
+            ),
+            (1, 1, 2)
+        );
+        review.files.get_mut("test/e2e.ts").unwrap().reviewed = true;
+        assert!(save_review(&path, "changed-url", "org/repo#1", &review).is_err());
+        let saved = load(&path).unwrap();
+        assert_eq!(saved.last_url, "url");
+        assert!(!saved.reviews["org/repo#1"].files["test/e2e.ts"].reviewed);
     }
 }

@@ -29,6 +29,7 @@ export interface FileDiff {
 export interface FileProgress {
   version: string;
   reviewed: boolean;
+  approvedUnread?: boolean;
   top: number;
   left: number;
 }
@@ -54,7 +55,7 @@ export function reconcile(
   const files = Object.fromEntries(
     snapshot.files.map((file) => {
       const old = previous?.files[file.path];
-      if (old?.reviewed && old.version !== file.version) invalidated++;
+      if (isResolved(old) && old?.version !== file.version) invalidated++;
       return [
         file.path,
         old?.version === file.version
@@ -80,3 +81,34 @@ export const statusLabels: Record<string, string> = {
   renamed: "Renomeado",
   changed: "Modo alterado",
 };
+
+export type ReviewDecision = "pending" | "viewed" | "approvedUnread";
+export function isResolved(file?: FileProgress): boolean {
+  return !!(file?.reviewed || file?.approvedUnread);
+}
+export interface ReviewSummary {
+  total: number;
+  viewed: number;
+  approvedUnread: number;
+}
+export function folderSummaries(
+  files: Record<string, FileProgress>,
+): Map<string, ReviewSummary> {
+  const folders = new Map<string, ReviewSummary>();
+  for (const [path, state] of Object.entries(files)) {
+    let prefix = "";
+    for (const part of path.split("/").slice(0, -1)) {
+      prefix += part + "/";
+      const summary = folders.get(prefix) ?? {
+        total: 0,
+        viewed: 0,
+        approvedUnread: 0,
+      };
+      summary.total++;
+      if (state.reviewed) summary.viewed++;
+      else if (state.approvedUnread) summary.approvedUnread++;
+      folders.set(prefix, summary);
+    }
+  }
+  return folders;
+}

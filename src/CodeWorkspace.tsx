@@ -1,3 +1,7 @@
+import { ReviewContextMenu } from "./ReviewState";
+import type { ReviewContextTarget, ReviewContextHandler } from "./ReviewState";
+import { isResolved, folderSummaries } from "./model";
+import type { ReviewDecision } from "./model";
 import { ReviewComments } from "./ReviewComments";
 import type { CommentsHandle, DraftComment } from "./ReviewComments";
 import { commentRanges, selectedLines } from "./comment-lines";
@@ -40,7 +44,7 @@ export default function CodeWorkspace({
   snapshot: Snapshot;
   review: ReviewProgress;
   select: (path: string) => void;
-  mark: (path: string, value: boolean) => void;
+  mark: (paths: string[], value: ReviewDecision) => void;
   saveScroll: (path: string, top: number, left: number) => void;
   loading: boolean;
 }) {
@@ -48,7 +52,22 @@ export default function CodeWorkspace({
     [hovered, setHovered] = useState(false),
     [keyboardTree, setKeyboardTree] = useState(false),
     [treeOpen, setTreeOpen] = useState(false);
-  const explorerOpen = pinned || hovered || keyboardTree || treeOpen;
+  const [contextTarget, setContextTarget] =
+    useState<ReviewContextTarget | null>(null);
+  const explorerOpen =
+    pinned || hovered || keyboardTree || treeOpen || !!contextTarget;
+  const folders = useMemo(() => folderSummaries(review.files), [review.files]);
+  const context: ReviewContextHandler = (event, path, folder) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextTarget({
+      path,
+      folder,
+      x: ("clientX" in event && event.clientX) || rect.left + 24,
+      y: ("clientY" in event && event.clientY) || rect.top + 20,
+      source: event.currentTarget as HTMLElement,
+    });
+  };
   const [bundle, setBundle] = useState<Bundle | null>(null),
     [project, setProject] = useState<Project | null>(null),
     [error, setError] = useState(""),
@@ -245,7 +264,7 @@ export default function CodeWorkspace({
   const changedPaths = snapshot.files.filter(
     (f) =>
       f.path.toLowerCase().includes(filter.toLowerCase()) &&
-      (!pending || !review.files[f.path]?.reviewed),
+      (!pending || !isResolved(review.files[f.path])),
   );
   const repoPaths = useMemo(
     () =>
@@ -289,6 +308,16 @@ export default function CodeWorkspace({
   const peekModel = peekLocation
     ? monaco.editor.getModel(peekLocation.uri)
     : null;
+  const contextFiles = contextTarget
+    ? snapshot.files.filter((f) =>
+        contextTarget.folder
+          ? f.path.startsWith(contextTarget.path)
+          : f.path === contextTarget.path,
+      )
+    : [];
+  const contextViewable = contextFiles.filter(
+    (f) => !loading && bundle?.files[f.path]?.diff.reviewable,
+  );
   if (error)
     return (
       <div className="notice" role="alert">
@@ -329,6 +358,22 @@ export default function CodeWorkspace({
           }
         }}
       >
+        {contextTarget && (
+          <ReviewContextMenu
+            target={contextTarget}
+            count={contextFiles.length}
+            viewable={contextViewable.length}
+            close={() => setContextTarget(null)}
+            choose={(decision) => {
+              const files =
+                decision === "viewed" ? contextViewable : contextFiles;
+              mark(
+                files.map((f) => f.path),
+                decision,
+              );
+            }}
+          />
+        )}
         <div className="explorer-rail">
           <button
             aria-label="Mostrar arquivos"
@@ -341,7 +386,7 @@ export default function CodeWorkspace({
           </button>
           <small title="Arquivos pendentes">
             {
-              snapshot.files.filter((f) => !review.files[f.path]?.reviewed)
+              snapshot.files.filter((f) => !isResolved(review.files[f.path]))
                 .length
             }
           </small>
@@ -425,6 +470,8 @@ export default function CodeWorkspace({
             {tree === "changes" ? (
               <FileTree
                 files={changedPaths}
+                context={context}
+                folders={folders}
                 progress={{
                   ...review,
                   selected: tab.mode === "diff" ? tab.path : "",
@@ -436,6 +483,9 @@ export default function CodeWorkspace({
             ) : (
               <RepositoryTree
                 paths={repoPaths}
+                context={context}
+                folders={folders}
+                progress={review}
                 selected={tab.path}
                 changed={changed}
                 open={(path) => navigate({ path, side, mode: "code" })}
@@ -532,9 +582,13 @@ export default function CodeWorkspace({
                   aria-label="Marcar arquivo como revisado"
                   checked={review.files[tab.path]?.reviewed ?? false}
                   disabled={loading || !loaded?.diff.reviewable}
-                  onChange={(e) => mark(tab.path, e.target.checked)}
+                  onChange={(e) =>
+                    mark([tab.path], e.target.checked ? "viewed" : "pending")
+                  }
                 />{" "}
-                Revisado
+                {review.files[tab.path]?.approvedUnread
+                  ? "Aprovado sem ler"
+                  : "Revisado"}
               </label>
             )}
           </div>

@@ -2275,3 +2275,54 @@ progress::-webkit-progress-value {
   align-items: start;
   gap: 8px;
 }
+
+.file-state.approved-unread {
+  color: #e5c087;
+  min-width: 22px;
+}
+.file-tree summary .file-state,
+.directory-item .file-state {
+  margin-left: auto;
+}
+.review-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 290px;
+  max-width: calc(100vw - 16px);
+  padding: 7px;
+  background: #19251d;
+  border: 1px solid #49634f;
+  border-radius: 7px;
+  box-shadow: 0 10px 36px #0008;
+  color: #d3e6da;
+  font-size: 12px;
+}
+.review-context-title {
+  padding: 6px 8px 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.review-context-menu p {
+  margin: 5px 8px 9px;
+  font-size: 11px;
+  color: #9aa99e;
+}
+.review-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.review-context-menu button:hover,
+.review-context-menu button:focus-visible {
+  background: #304c39;
+  outline: none;
+}
+.review-context-menu button:disabled {
+  opacity: 0.45;
+}

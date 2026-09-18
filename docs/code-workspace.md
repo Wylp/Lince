@@ -44,6 +44,14 @@ Há um orçamento de proteção por consulta: 32 MiB de dependências, 10.000 ca
 
 As árvores Alterações e Explorador usam SVGs locais do **Material Icon Theme 5.38.1**, com ícones por extensão/nome e pastas abertas/fechadas. Testes, workflows, GitHub, SQL e Docker têm ícones específicos. Estado de revisão permanece separado do tipo de arquivo. Origem e licença MIT estão em `src/assets/material/`. Não há CDN ou fonte de ícones remota.
 
+## Estado dos arquivos e pastas
+
+Nas árvores **Alterações** e **Explorador**, clique com o botão direito (ou Shift+F10) para marcar como visto ou voltar a pendente. Nas pastas, a ação inclui arquivos alterados nas subpastas e independe do filtro visual. Somente diffs disponíveis podem ser marcados como vistos; arquivos sem diff permanecem pendentes.
+
+Para arquivos individuais, **Aprovado sem ler** registra uma decisão local distinta, inclusive quando o diff não pode ser exibido. O indicador âmbar `≈✓` diferencia esse estado do `✓` de visto. Nenhuma dessas ações envia uma aprovação ao GitHub. O filtro de pendentes e o progresso total consideram ambas as decisões, mantendo suas contagens separadas no cabeçalho e no histórico.
+
+Pastas recebem `✓` quando todos os arquivos alterados descendentes estão vistos. Se todas as decisões foram tomadas, mas há arquivos aprovados sem leitura, recebem `≈✓` e a descrição “Pasta concluída com arquivos não lidos”. Pastas parciais mostram concluídos/total. Arquivos de contexto não alterados não entram nessa contagem nem recebem estado de revisão. Um novo snapshot que modifica a versão do arquivo invalida tanto a leitura quanto a aprovação sem ler.
+
 ## Cache Git separado
 
 O Rust mantém repositórios **bare** em `app_cache_dir()/repositories/<hash-do-repo>.git`. A autenticação HTTPS usa `gh auth git-credential`. `LINCE_GIT` permite indicar o executável Git; por padrão ele precisa estar no PATH. `LINCE_GH` continua disponível.

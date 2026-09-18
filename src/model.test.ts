@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "react-diff-view";
-import { reconcile } from "./model";
+import { reconcile, folderSummaries } from "./model";
 import type { Snapshot } from "./model";
 const snapshot = {
   files: [
@@ -56,5 +56,45 @@ describe("diff library evaluation", () => {
     expect(changes.filter((c) => c.type === "delete")).toHaveLength(
       removed as number,
     );
+  });
+});
+
+describe("local review decisions", () => {
+  it("invalidates approvals without reading after changes, but preserves unchanged decisions", () => {
+    const file = {
+      version: "same",
+      reviewed: false,
+      approvedUnread: true,
+      top: 45,
+      left: 0,
+    };
+    const result = reconcile(snapshot, {
+      selected: "b.ts",
+      files: { "a.ts": file, "b.ts": file },
+    });
+    expect(result.invalidated).toBe(1);
+    expect(result.review.files["a.ts"].approvedUnread).toBeFalsy();
+    expect(result.review.files["b.ts"].approvedUnread).toBe(true);
+    expect(result.review.files["b.ts"].reviewed).toBe(false);
+  });
+  it("aggregates nested folders using all files with separate read and unread counts", () => {
+    const file = { version: "same", reviewed: false, top: 0, left: 0 };
+    const groups = folderSummaries({
+      "src/api/a.ts": { ...file, reviewed: true },
+      "src/api/b.ts": { ...file, approvedUnread: true },
+      "src/c.ts": file,
+      "src-other/d.ts": file,
+    });
+    expect(groups.get("src/api/")).toEqual({
+      total: 2,
+      viewed: 1,
+      approvedUnread: 1,
+    });
+    expect(groups.get("src/")).toEqual({
+      total: 3,
+      viewed: 1,
+      approvedUnread: 1,
+    });
+    expect(groups.get("src-other/")?.total).toBe(1);
   });
 });

@@ -5,6 +5,7 @@ import { SearchSelect } from "./SearchSelect";
 interface Entry {
   key: string;
   reviewed: number;
+  approvedUnread?: number;
   total: number;
   lastReviewedAt: number | null;
 }
@@ -50,8 +51,8 @@ export function ReviewHistory({
       e.key.toLowerCase().includes(query.trim().toLowerCase()) &&
       (!status ||
         (status === "complete"
-          ? e.total > 0 && e.reviewed === e.total
-          : e.reviewed < e.total)),
+          ? e.total > 0 && e.reviewed + (e.approvedUnread ?? 0) === e.total
+          : e.reviewed + (e.approvedUnread ?? 0) < e.total)),
   );
   return (
     <main className="pr-browser history-browser">
@@ -141,8 +142,14 @@ export function ReviewHistory({
                   <div className="history-progress">
                     <span>
                       {entry.reviewed} / {entry.total} arquivos revisados
+                      {entry.approvedUnread
+                        ? ` · ${entry.approvedUnread} aprovados sem ler`
+                        : ""}
                     </span>
-                    <progress value={entry.reviewed} max={entry.total || 1} />
+                    <progress
+                      value={entry.reviewed + (entry.approvedUnread ?? 0)}
+                      max={entry.total || 1}
+                    />
                   </div>
                   <button
                     disabled={opening || !repo}
