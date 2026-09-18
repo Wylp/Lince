@@ -254,7 +254,11 @@ function RepoGroup({
   opening,
   author,
   onAuthors,
+  watching,
+  toggleWatch,
 }: {
+  watching: boolean;
+  toggleWatch: () => Promise<void>;
   author: string;
   onAuthors: (authors: string[]) => void;
   repo: Repository;
@@ -265,6 +269,8 @@ function RepoGroup({
   configure: () => void;
   opening: boolean;
 }) {
+  const [watchBusy, setWatchBusy] = useState(false),
+    [watchError, setWatchError] = useState("");
   const [items, setItems] = useState<PullRequest[]>([]),
     [page, setPage] = useState(1),
     [more, setMore] = useState(false);
@@ -330,6 +336,26 @@ function RepoGroup({
           </span>
         )}
         <button
+          className={`watch-toggle ${watching ? "active" : ""}`}
+          disabled={watchBusy}
+          aria-pressed={watching}
+          aria-label={`Avisar novas PRs de ${repo.name}`}
+          title="Notificações a cada 2 minutos com o Lince aberto"
+          onClick={() => {
+            setWatchBusy(true);
+            setWatchError("");
+            void toggleWatch()
+              .catch((e) => setWatchError(String(e)))
+              .finally(() => setWatchBusy(false));
+          }}
+        >
+          {watchBusy
+            ? "Salvando…"
+            : watching
+              ? "✓ Alertas ativos"
+              : "♧ Avisar novas PRs"}
+        </button>
+        <button
           className="configure-repo"
           onClick={configure}
           aria-label={`Configurar codebases de ${repo.name}`}
@@ -337,6 +363,11 @@ function RepoGroup({
           ⚙ Codebases
         </button>
       </header>
+      {watchError && (
+        <p className="inline-error" role="alert">
+          {watchError}
+        </p>
+      )}
       {items.map((pr) => (
         <PrRow
           key={pr.number}
@@ -384,10 +415,14 @@ function RepoGroup({
   );
 }
 export function PrBrowser({
+  watched,
+  toggleWatch,
   open,
   back,
   opening,
 }: {
+  watched: string[];
+  toggleWatch: (repo: string) => Promise<void>;
   open: (url: string) => void;
   back: () => void;
   opening: boolean;
@@ -608,6 +643,8 @@ export function PrBrowser({
             key={`${refresh}:${repo.name}:${author}`}
             author={author}
             onAuthors={onAuthors}
+            watching={watched.includes(repo.name)}
+            toggleWatch={() => toggleWatch(repo.name)}
             repo={repo}
             activity={history.find(
               (h) => h.repo.toLowerCase() === repo.name.toLowerCase(),

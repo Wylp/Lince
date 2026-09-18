@@ -1608,3 +1608,80 @@ progress::-webkit-progress-value {
   color: #91a298;
   padding: 10px;
 }
+
+.history-search {
+  flex: 3;
+}
+.history-browser .search-select {
+  max-width: 300px;
+}
+.history-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: #121d18;
+  border: 1px solid #293f32;
+  padding: 22px;
+  border-radius: 9px;
+  margin-bottom: 12px;
+}
+.history-details {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.history-details strong {
+  overflow-wrap: anywhere;
+}
+.history-details > span,
+.history-progress > span {
+  font-size: 12px;
+  color: #8da596;
+}
+.history-progress {
+  display: grid;
+  gap: 10px;
+  min-width: 180px;
+}
+.history-progress progress {
+  width: 100%;
+  height: 5px;
+  accent-color: #8fe3ad;
+}
+@media (max-width: 1050px) {
+  .history-card {
+    flex-wrap: wrap;
+  }
+  .topbar {
+    gap: 10px;
+  }
+  .browse-button {
+    padding: 8px;
+  }
+}
+.notification-status {
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid #304739;
+  color: #9bb8a4;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+}
+.watch-toggle {
+  border: 1px solid #344c3c;
+  color: #90b19b;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  margin-left: auto;
+}
+.watch-toggle.active {
+  color: #9be9b7;
+  background: #213e2a;
+}
+.repo-group-header .configure-repo {
+  margin-left: 0;
+}

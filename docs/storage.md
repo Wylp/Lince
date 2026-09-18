@@ -11,9 +11,10 @@ O Lince usa SQLite incorporado ao executável, via `rusqlite`/`bundled`. Não pr
 | `file_progress` | Caminho, versão do diff, revisado, scroll vertical e horizontal |
 | `review_activity` | Uma sessão por PR/dia, com data da última marcação |
 | `repository_config` | Repositórios configurados como monorepo |
+| `watched_repos` | Repos escolhidos para alertas, por conta, com último número de PR consultado |
 | `codebases` | Caminhos e nomes dos serviços de cada repo |
 
-O schema é versionado por `PRAGMA user_version` (atualmente 2). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e árvores Git permanecem em caches de memória. Filtros e estados temporários da interface também ficam em memória.
+O schema é versionado por `PRAGMA user_version` (atualmente 3). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e árvores Git permanecem em caches de memória. Filtros e estados temporários da interface também ficam em memória.
 
 ## Arquivo
 
@@ -42,3 +43,5 @@ Continua existindo debounce de 300 ms para scroll, gravação imediata ao trocar
 `cargo test --manifest-path src-tauri/Cargo.toml progress::tests` verifica roundtrip, preservação de outras PRs, remoção de arquivos obsoletos, importação única, backup intacto, JSON inválido, rollback e rejeição de schema futuro/banco corrompido. Todos usam diretórios temporários, sem modificar o progresso real do usuário.
 
 O schema 2 migra bancos da versão 1 sem perder progresso e acrescenta histórico e codebases. Detalhes da ordenação em [discovery.md](discovery.md).
+
+O schema 3 acrescenta `watched_repos`, preservando dados dos schemas anteriores. O histórico é consultado por agregação de `reviews`, `file_progress` e `review_activity`, sem multiplicar contagens por sessão.

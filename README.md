@@ -189,3 +189,10 @@ Evitar caminhos e comandos específicos de Unix. Considerar descoberta do execut
 ## Atualizações automáticas
 
 Releases em [Wylp/Lince](https://github.com/Wylp/Lince). O botão na barra superior oferece a nova versão e instala com assinatura verificada, preservando o progresso. Consulte [preparação e publicação](docs/updates.md) para configurar a chave de assinatura no GitHub Actions antes da primeira release.
+
+
+## Histórico, alertas e carregamento em lote
+
+**Histórico** mostra suas PRs salvas, progresso e última revisão, com busca e botão para retomar. Em **Listar PRs**, ative **Avisar novas PRs** nos repos desejados: o Lince consulta a cada dois minutos enquanto estiver aberto, inclusive minimizado. As escolhas e o cursor persistem no SQLite. [Detalhes e limites](docs/history-notifications.md).
+
+A abertura agora prepara todos os conteúdos e diffs em lotes GraphQL. Navegar entre arquivos não consulta o GitHub. O snapshot inclui conteúdo antes/depois para reutilização por futuras features. [Arquitetura, custos e limites do lote](docs/batch-loading.md).

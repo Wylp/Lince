@@ -32,8 +32,8 @@ impl Default for Store {
     }
 }
 
-type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
-const SCHEMA: u32 = 2;
+pub(crate) type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
+const SCHEMA: u32 = 3;
 
 fn legacy(path: &Path) -> DbResult<Store> {
     match std::fs::read(path) {
@@ -54,7 +54,7 @@ fn legacy(path: &Path) -> DbResult<Store> {
     }
 }
 
-fn connect(path: &Path) -> DbResult<Connection> {
+pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
     let directory = path.parent().ok_or("Diretório de dados ausente")?;
     std::fs::create_dir_all(directory)?;
     let mut conn = Connection::open(path)?;
@@ -109,6 +109,10 @@ fn connect(path: &Path) -> DbResult<Connection> {
             FROM file_progress WHERE reviewed=1 AND instr(review_key,'#')>1 GROUP BY review_key;")?;
             tx.pragma_update(None, "user_version", SCHEMA)?;
         }
+        if locked_version < 3 {
+            tx.execute_batch("CREATE TABLE watched_repos(account TEXT NOT NULL,repo TEXT NOT NULL,last_seen INTEGER NOT NULL,PRIMARY KEY(account,repo));")?;
+        }
+        tx.pragma_update(None, "user_version", SCHEMA)?;
         tx.commit()?;
     }
     Ok(conn)
@@ -566,7 +570,113 @@ mod discovery_storage_tests {
                 .unwrap()
                 .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
                 .unwrap(),
-            2
+            SCHEMA
         );
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewHistory {
+    pub key: String,
+    pub reviewed: i64,
+    pub total: i64,
+    pub last_reviewed_at: Option<i64>,
+}
+
+pub fn review_history(path: &Path) -> Result<Vec<ReviewHistory>, String> {
+    let read = || -> DbResult<Vec<ReviewHistory>> {
+        let conn = connect(path)?;
+        let mut query = conn.prepare(
+            "SELECT r.review_key,
+            COALESCE(f.reviewed,0),COALESCE(f.total,0),NULLIF(a.last_reviewed_at,0)
+            FROM reviews r
+            LEFT JOIN (SELECT review_key,SUM(reviewed) reviewed,COUNT(*) total
+                FROM file_progress GROUP BY review_key) f USING(review_key)
+            LEFT JOIN (SELECT review_key,MAX(last_reviewed_at) last_reviewed_at
+                FROM review_activity GROUP BY review_key) a USING(review_key)
+            ORDER BY a.last_reviewed_at DESC,r.review_key",
+        )?;
+        let rows = query
+            .query_map([], |r| {
+                Ok(ReviewHistory {
+                    key: r.get(0)?,
+                    reviewed: r.get(1)?,
+                    total: r.get(2)?,
+                    last_reviewed_at: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    };
+    read().map_err(|e| format!("Não foi possível carregar o histórico: {e}"))
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    #[test]
+    fn v2_upgrade_preserves_reviews_and_separates_watches_by_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite3");
+        save_review(&path, "url", "org/repo#1", &ReviewProgress::default()).unwrap();
+        let conn = connect(&path).unwrap();
+        conn.execute_batch("DROP TABLE watched_repos;PRAGMA user_version=2;")
+            .unwrap();
+        drop(conn);
+        let conn = connect(&path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO watched_repos VALUES('alice','org/repo',10),('bob','org/repo',20);",
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT last_seen FROM watched_repos WHERE account='alice'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            10
+        );
+        assert_eq!(review_history(&path).unwrap()[0].key, "org/repo#1");
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+                .unwrap(),
+            SCHEMA
+        );
+    }
+    #[test]
+    fn history_includes_unmarked_prs_and_does_not_multiply_files_by_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite3");
+        let mut review = ReviewProgress::default();
+        review.files.insert(
+            "a".into(),
+            FileProgress {
+                version: "v1".into(),
+                ..Default::default()
+            },
+        );
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        let rows = review_history(&path).unwrap();
+        assert_eq!(rows[0].total, 1);
+        assert_eq!(rows[0].reviewed, 0);
+        assert_eq!(rows[0].last_reviewed_at, None);
+        review.files.get_mut("a").unwrap().reviewed = true;
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        connect(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO review_activity VALUES('org/repo#1','org/repo',-1,1)",
+                [],
+            )
+            .unwrap();
+        save_review(&path, "url", "org/repo#2", &ReviewProgress::default()).unwrap();
+        let rows = review_history(&path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "org/repo#1");
+        assert_eq!((rows[0].reviewed, rows[0].total), (1, 1));
+        assert!(rows[0].last_reviewed_at.unwrap() > 1);
+        assert_eq!(rows[1].total, 0);
     }
 }

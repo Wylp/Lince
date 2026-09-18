@@ -1,11 +1,10 @@
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
-const MAX_FILE: u64 = 1_048_576;
+pub(crate) const MAX_FILE: u64 = 1_048_576;
 const MAX_LINES: usize = 12_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -43,7 +42,7 @@ pub struct FileDiff {
     pub reviewable: bool,
 }
 impl FileDiff {
-    fn unsupported(reason: impl Into<String>) -> Self {
+    pub(crate) fn unsupported(reason: impl Into<String>) -> Self {
         Self {
             patch: None,
             reason: Some(reason.into()),
@@ -111,6 +110,16 @@ fn gh_executable() -> PathBuf {
 }
 
 pub async fn api(endpoint: &str) -> Result<Value, String> {
+    request(endpoint, None).await
+}
+pub async fn graphql(query: String) -> Result<Value, String> {
+    let result = request("graphql", Some(query)).await?;
+    if result.get("errors").is_some() {
+        return Err("Consulta GraphQL incompleta ou recusada pelo GitHub. Tente novamente.".into());
+    }
+    Ok(result)
+}
+async fn request(endpoint: &str, query: Option<String>) -> Result<Value, String> {
     let mut command = Command::new(gh_executable());
     command
         .args([
@@ -118,7 +127,7 @@ pub async fn api(endpoint: &str) -> Result<Value, String> {
             "--hostname",
             "github.com",
             "--method",
-            "GET",
+            if query.is_some() { "POST" } else { "GET" },
             endpoint,
         ])
         .env("GH_PROMPT_DISABLED", "1")
@@ -127,6 +136,9 @@ pub async fn api(endpoint: &str) -> Result<Value, String> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    if let Some(query) = query {
+        command.args(["-f", &format!("query={query}")]);
+    }
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     let mut child = command.spawn().map_err(|e| {
@@ -258,92 +270,7 @@ pub async fn open(input: &str) -> Result<Snapshot, String> {
     })
 }
 
-// Tree IDs are immutable. Bound the cache by serialized size, not only entry count.
-#[derive(Default)]
-struct TreeCache {
-    entries: std::collections::HashMap<String, Value>,
-    bytes: usize,
-}
-async fn tree_api(endpoint: &str) -> Result<Value, String> {
-    static CACHE: std::sync::OnceLock<tokio::sync::Mutex<TreeCache>> = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(|| tokio::sync::Mutex::new(TreeCache::default()));
-    if let Some(value) = cache.lock().await.entries.get(endpoint) {
-        return Ok(value.clone());
-    }
-    let value = api(endpoint).await?;
-    let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?.len();
-    if bytes <= 16 * 1024 * 1024 {
-        let mut cache = cache.lock().await;
-        if cache.bytes + bytes > 16 * 1024 * 1024 {
-            cache.entries.clear();
-            cache.bytes = 0;
-        }
-        if !cache.entries.contains_key(endpoint) {
-            cache.bytes += bytes;
-            cache.entries.insert(endpoint.into(), value.clone());
-        }
-    }
-    Ok(value)
-}
-
-// Resolve tree entries instead of Contents API, which may dereference symlinks.
-async fn content(
-    repo: &str,
-    commit: &str,
-    path: &str,
-) -> Result<Result<(String, String), String>, String> {
-    let mut tree = commit.to_owned();
-    let parts: Vec<_> = path.split('/').collect();
-    for (i, part) in parts.iter().enumerate() {
-        let response = tree_api(&format!("repos/{repo}/git/trees/{tree}")).await?;
-        if response["truncated"] == true {
-            return Ok(Err(
-                "Árvore do GitHub truncada; conteúdo completo não pode ser garantido.".into(),
-            ));
-        }
-        let entries = response["tree"].as_array().ok_or("Árvore Git inválida.")?;
-        let entry = entries
-            .iter()
-            .find(|v| v["path"].as_str() == Some(part))
-            .ok_or_else(|| format!("Arquivo ausente no snapshot: {path}"))?;
-        tree = string(entry, "sha")?;
-        if i + 1 != parts.len() {
-            if entry["type"] != "tree" {
-                return Ok(Err("Caminho não suportado na árvore Git.".into()));
-            }
-            continue;
-        }
-        if entry["type"] != "blob" || !matches!(entry["mode"].as_str(), Some("100644" | "100755")) {
-            return Ok(Err(
-                "Link simbólico, submódulo ou modo Git não suportado nesta versão.".into(),
-            ));
-        }
-        if entry["size"].as_u64().unwrap_or(MAX_FILE + 1) > MAX_FILE {
-            return Ok(Err(
-                "Arquivo maior que 1 MiB. Diff não exibido para preservar o desempenho.".into(),
-            ));
-        }
-        let blob = api(&format!("repos/{repo}/git/blobs/{tree}")).await?;
-        if blob["encoding"] != "base64" {
-            return Ok(Err("Codificação do conteúdo não suportada.".into()));
-        }
-        let encoded = string(&blob, "content")?.replace(['\n', '\r'], "");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|_| "Conteúdo base64 inválido.")?;
-        if blob["size"].as_u64() != Some(bytes.len() as u64)
-            || entry["size"].as_u64() != Some(bytes.len() as u64)
-        {
-            return Ok(Err(
-                "Conteúdo incompleto: tamanho diferente do objeto Git.".into()
-            ));
-        }
-        let mode = string(entry, "mode")?;
-        return Ok(decode_text(bytes).map(|text| (text, mode)));
-    }
-    Err("Caminho vazio.".into())
-}
-fn decode_text(bytes: Vec<u8>) -> Result<String, String> {
+pub(crate) fn decode_text(bytes: Vec<u8>) -> Result<String, String> {
     if bytes.len() as u64 > MAX_FILE {
         return Err("Arquivo maior que 1 MiB.".into());
     }
@@ -367,65 +294,7 @@ fn decode_text(bytes: Vec<u8>) -> Result<String, String> {
     }
     Ok(text)
 }
-pub async fn diff(snapshot: &Snapshot, file: &File) -> Result<FileDiff, String> {
-    if !matches!(
-        file.status.as_str(),
-        "added" | "removed" | "modified" | "renamed" | "changed"
-    ) {
-        return Ok(FileDiff::unsupported(format!(
-            "Status Git não suportado: {}",
-            file.status
-        )));
-    }
-    let old = if file.status == "added" {
-        Ok((String::new(), "ausente".to_owned()))
-    } else {
-        content(
-            &snapshot.repo,
-            &snapshot.merge_base,
-            file.previous_path.as_deref().unwrap_or(&file.path),
-        )
-        .await?
-    };
-    let new = if file.status == "removed" {
-        Ok((String::new(), "ausente".to_owned()))
-    } else {
-        content(&snapshot.repo, &snapshot.head_sha, &file.path).await?
-    };
-    let (old, new) = match (old, new) {
-        (Ok(a), Ok(b)) => (a, b),
-        (Err(e), _) | (_, Err(e)) => return Ok(FileDiff::unsupported(e)),
-    };
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut result = render_diff(&old.0, &new.0);
-        if old.1 != new.1 && result.reviewable {
-            result.reason = Some(format!(
-                "Modo Git: {} → {}. {}",
-                old.1,
-                new.1,
-                result.reason.unwrap_or_default()
-            ));
-        }
-        let mut notes = Vec::new();
-        if !old.0.is_empty() && !old.0.ends_with('\n') {
-            notes.push("Base sem newline final.");
-        }
-        if !new.0.is_empty() && !new.0.ends_with('\n') {
-            notes.push("Head sem newline final.");
-        }
-        if !notes.is_empty() && result.reviewable {
-            result.reason = Some(format!(
-                "{} {}",
-                result.reason.unwrap_or_default(),
-                notes.join(" ")
-            ));
-        }
-        result
-    })
-    .await
-    .map_err(|e| e.to_string())
-}
-fn render_diff(old: &str, new: &str) -> FileDiff {
+pub(crate) fn render_diff(old: &str, new: &str) -> FileDiff {
     if old == new {
         return FileDiff { patch: None, reason: Some("Sem alterações textuais: renomeação, arquivo vazio ou mudança de permissão. Confira o status e o caminho acima.".into()), reviewable: true };
     }
@@ -460,9 +329,10 @@ mod tests {
             .unwrap_or_else(|_| "https://github.com/cli/cli/pull/14462".into());
         let snapshot = open(&url).await.unwrap();
         assert!(!snapshot.files.is_empty());
+        let loaded = crate::batch::load(snapshot.clone()).await.unwrap();
         let mut displayed = 0;
         for file in snapshot.files.iter().take(5) {
-            let result = diff(&snapshot, file).await.unwrap();
+            let result = &loaded.files[&file.path].diff;
             assert!(result.patch.is_some() || result.reason.is_some());
             if result.reviewable {
                 displayed += 1;

@@ -1,3 +1,5 @@
+import { useNotifications } from "./notifications";
+import { ReviewHistory } from "./ReviewHistory";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,6 +17,7 @@ import type { FileDiff, ReviewProgress, Snapshot, Store } from "./model";
 
 export default function App() {
   const { auth, refresh: refreshAuth } = useGhAuth();
+  const notifications = useNotifications(auth.login);
   const [browsing, setBrowsing] = useState(false);
   const [url, setUrl] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -22,6 +25,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveState, setSaveState] = useState("Progresso local");
   const [info, setInfo] = useState("");
@@ -109,6 +113,7 @@ export default function App() {
       active.current = { snapshot: next, review: restored.review };
       setSnapshot(next);
       setBrowsing(false);
+      setHistoryOpen(false);
       setUrl(next.url);
       setFilter("");
       setPendingOnly(false);
@@ -283,6 +288,7 @@ export default function App() {
                 setReview(null);
                 setDiff(null);
                 setBrowsing(false);
+                setHistoryOpen(false);
                 setError("");
                 setInfo("");
               })
@@ -321,15 +327,48 @@ export default function App() {
           className={`browse-button ${browsing ? "active" : ""}`}
           onClick={() => {
             void flush()
-              .then(() => setBrowsing(true))
+              .then(() => {
+                setHistoryOpen(false);
+                setBrowsing(true);
+              })
               .catch((e) => setError(String(e)));
           }}
           disabled={loading || !ready}
         >
           ☷ Listar PRs
         </button>
+        <button
+          className={`browse-button ${historyOpen ? "active" : ""}`}
+          disabled={loading || !ready}
+          onClick={() => {
+            void flush()
+              .then(() => {
+                setBrowsing(false);
+                setHistoryOpen(true);
+              })
+              .catch((e) => setError(String(e)));
+          }}
+        >
+          ↺ Histórico
+        </button>
+        <button
+          className="notification-status"
+          aria-label="Verificar alertas de novas PRs"
+          disabled={notifications.busy || !notifications.watched.length}
+          title={notifications.error || notifications.status}
+          onClick={() => {
+            void notifications.check();
+          }}
+        >
+          ♧ {notifications.watched.length} alertas
+        </button>
         <AuthStatus auth={auth} refresh={refreshAuth} compact />
       </header>
+      {notifications.error && (
+        <div className="banner error" role="alert">
+          Alertas: {notifications.error}
+        </div>
+      )}
       {error && (
         <div className="banner error" role="alert">
           {error}
@@ -355,8 +394,18 @@ export default function App() {
           {info}
         </div>
       )}
-      {browsing ? (
+      {historyOpen ? (
+        <ReviewHistory
+          open={(input) => {
+            void open(input);
+          }}
+          back={() => setHistoryOpen(false)}
+          opening={loading}
+        />
+      ) : browsing ? (
         <PrBrowser
+          watched={notifications.watched}
+          toggleWatch={notifications.toggle}
           open={(input) => {
             void open(input);
           }}
@@ -585,7 +634,7 @@ export default function App() {
           </div>
           <AuthStatus auth={auth} refresh={refreshAuth} />
           {loading && (
-            <p role="status">Consultando metadados e arquivos da PR…</p>
+            <p role="status">Carregando os arquivos da PR em lote…</p>
           )}
         </main>
       )}

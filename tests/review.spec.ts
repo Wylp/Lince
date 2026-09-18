@@ -4,6 +4,12 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const win = window as any;
     win.isTauri = true;
+    Object.defineProperty(window.Notification, "permission", {
+      configurable: true,
+      get: () => "default",
+    });
+    window.Notification.requestPermission = async () =>
+      win.denyNotifications ? "denied" : "granted";
     const files = [
       {
         path: "src/controller.ts",
@@ -74,6 +80,42 @@ test.beforeEach(async ({ page }) => {
         if (command === "plugin:process|restart") {
           win.restarted = true;
           return;
+        }
+        if (command === "list_watches")
+          return JSON.parse(localStorage.getItem("test-watches") || "[]");
+        if (command === "set_watch") {
+          const rows = JSON.parse(
+            localStorage.getItem("test-watches") || "[]",
+          ).filter((w: any) => w.repo !== args.repo);
+          if (args.enabled) rows.push({ account: "reviewer", repo: args.repo });
+          localStorage.setItem("test-watches", JSON.stringify(rows));
+          return;
+        }
+        if (command === "plugin:notification|is_permission_granted")
+          return !win.denyNotifications;
+        if (command === "plugin:notification|request_permission")
+          return win.denyNotifications ? "denied" : "granted";
+        if (command === "poll_watches")
+          return {
+            checked: 1,
+            notified: 0,
+            errors: win.pollError ? ["GitHub indisponível"] : [],
+          };
+        if (command === "get_review_history") {
+          if (win.historyError) throw "Histórico indisponível";
+          const saved = JSON.parse(
+            localStorage.getItem("test-progress") || '{"reviews":{}}',
+          );
+          return Object.entries(saved.reviews).map(
+            ([key, review]: [string, any]) => ({
+              key,
+              total: Object.keys(review.files).length,
+              reviewed: Object.values(review.files).filter(
+                (f: any) => f.reviewed,
+              ).length,
+              lastReviewedAt: null,
+            }),
+          );
         }
         if (command === "get_repo_activity")
           return [
@@ -534,4 +576,85 @@ test("offers updates, reports download errors and installs on retry", async ({
       ),
     )
     .toBe(true);
+});
+
+test("history persists progress, filters and resumes the selected file", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Histórico", exact: false }).click();
+  await expect(page.getByText("Seu histórico começa aqui")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Voltar para a home do Lince" })
+    .click();
+  await page
+    .getByLabel("URL da pull request")
+    .fill("https://github.com/acme/project/pull/42");
+  await page.getByRole("button", { name: "Abrir PR", exact: false }).click();
+  await page.getByLabel("Marcar arquivo como revisado").check();
+  await page.getByRole("button", { name: "Histórico", exact: false }).click();
+  await expect(page.getByText("1 / 153 arquivos revisados")).toBeVisible();
+  await page.screenshot({
+    path: `test-results/history-${test.info().project.name}.png`,
+  });
+  await page.getByPlaceholder("Repositório ou #número…").fill("missing");
+  await expect(page.getByText("Nenhuma revisão neste filtro")).toBeVisible();
+  await page.getByPlaceholder("Repositório ou #número…").fill("#42");
+  await page
+    .getByRole("button", { name: "Retomar acme/project#42", exact: true })
+    .click();
+  await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
+  await page.reload();
+  await page.getByRole("button", { name: "Histórico", exact: false }).click();
+  await expect(page.getByText("1 / 153 arquivos revisados")).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).historyError = true;
+  });
+  await page
+    .getByRole("button", { name: "Voltar", exact: false })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Histórico", exact: false }).click();
+  await expect(page.getByRole("alert")).toContainText("Histórico indisponível");
+  await page.evaluate(() => {
+    (window as any).historyError = false;
+  });
+  await page
+    .getByRole("button", { name: "Tentar novamente", exact: true })
+    .click();
+  await expect(page.getByText("1 / 153 arquivos revisados")).toBeVisible();
+});
+
+test("repo notifications opt in persists, permission denial and poll errors are visible", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Listar PRs" }).click();
+  const toggle = page.getByRole("button", {
+    name: "Avisar novas PRs de zed/mono",
+    exact: true,
+  });
+  await page.evaluate(() => {
+    (window as any).denyNotifications = true;
+  });
+  await toggle.click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Notificações bloqueadas",
+  );
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await page.evaluate(() => {
+    (window as any).denyNotifications = false;
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.reload();
+  await page.getByRole("button", { name: "Listar PRs" }).click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.evaluate(() => {
+    (window as any).pollError = true;
+  });
+  await page
+    .getByRole("button", { name: "Verificar alertas de novas PRs" })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("GitHub indisponível");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });

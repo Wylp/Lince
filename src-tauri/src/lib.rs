@@ -1,37 +1,43 @@
+mod batch;
 mod discovery;
 mod github;
 mod progress;
+mod watches;
 use github::{FileDiff, Snapshot};
 use std::collections::HashMap;
 use tauri::{Manager, State};
 use tokio::sync::Mutex;
 
 struct Backend {
-    snapshots: Mutex<HashMap<String, Snapshot>>,
-    diffs: Mutex<HashMap<String, FileDiff>>,
+    bundles: Mutex<HashMap<String, std::sync::Arc<batch::LoadedPr>>>,
+    loading: Mutex<()>,
     disk: Mutex<()>,
+    monitor: Mutex<()>,
     network: tokio::sync::Semaphore,
 }
 impl Default for Backend {
     fn default() -> Self {
         Self {
-            snapshots: Mutex::new(HashMap::new()),
-            diffs: Mutex::new(HashMap::new()),
+            bundles: Mutex::new(HashMap::new()),
+            loading: Mutex::new(()),
             disk: Mutex::new(()),
+            monitor: Mutex::new(()),
             network: tokio::sync::Semaphore::new(3),
         }
     }
 }
 #[tauri::command]
 async fn open_pr(url: String, state: State<'_, Backend>) -> Result<Snapshot, String> {
+    let _loading = state.loading.lock().await;
     let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
     let snapshot = github::open(&url).await?;
-    let mut snapshots = state.snapshots.lock().await;
-    if snapshots.len() >= 8 {
-        snapshots.clear();
-        state.diffs.lock().await.clear();
+    if state.bundles.lock().await.contains_key(&snapshot.id) {
+        return Ok(snapshot);
     }
-    snapshots.insert(snapshot.id.clone(), snapshot.clone());
+    let bundle = batch::load(snapshot.clone()).await?;
+    let mut cache = state.bundles.lock().await;
+    cache.clear();
+    cache.insert(snapshot.id.clone(), std::sync::Arc::new(bundle));
     Ok(snapshot)
 }
 #[tauri::command]
@@ -40,30 +46,26 @@ async fn get_diff(
     path: String,
     state: State<'_, Backend>,
 ) -> Result<FileDiff, String> {
-    let key = format!("{snapshot_id}\0{path}");
-    if let Some(diff) = state.diffs.lock().await.get(&key) {
-        return Ok(diff.clone());
-    }
-    let snapshot = state
-        .snapshots
-        .lock()
-        .await
+    let cache = state.bundles.lock().await;
+    let bundle = cache
         .get(&snapshot_id)
-        .cloned()
         .ok_or("Revisão expirada. Abra a PR novamente.")?;
-    let file = snapshot
+    bundle
         .files
-        .iter()
-        .find(|f| f.path == path)
-        .ok_or("Arquivo não pertence à revisão.")?;
-    let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
-    let result = github::diff(&snapshot, file).await?;
-    let mut cache = state.diffs.lock().await;
-    if cache.len() >= 24 {
-        cache.clear();
-    }
-    cache.insert(key, result.clone());
-    Ok(result)
+        .get(&path)
+        .map(|f| f.diff.clone())
+        .ok_or("Arquivo não pertence à revisão.".into())
+}
+#[tauri::command]
+async fn get_pr_files(
+    snapshot_id: String,
+    state: State<'_, Backend>,
+) -> Result<std::sync::Arc<batch::LoadedPr>, String> {
+    let cache = state.bundles.lock().await;
+    let bundle = cache
+        .get(&snapshot_id)
+        .ok_or("Revisão expirada. Abra a PR novamente.")?;
+    Ok(bundle.clone())
 }
 #[tauri::command]
 async fn load_progress(
@@ -149,6 +151,22 @@ async fn get_repo_activity(
 }
 
 #[tauri::command]
+async fn get_review_history(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+) -> Result<Vec<progress::ReviewHistory>, String> {
+    let _guard = state.disk.lock().await;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("lince.sqlite3");
+    tauri::async_runtime::spawn_blocking(move || progress::review_history(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn get_repo_configs(
     app: tauri::AppHandle,
     state: State<'_, Backend>,
@@ -224,8 +242,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Backend::default())
         .setup(|_app| {
+            watches::start(_app.handle().clone());
             #[cfg(not(target_os = "macos"))]
             if let Some(window) = _app.get_webview_window("main") {
                 window.set_decorations(false)?;
@@ -234,18 +254,36 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             updates_enabled,
+            list_watches,
+            set_watch,
+            poll_watches,
             get_repo_configs,
             save_repo_config,
             get_service_labels,
             list_repositories,
             list_pull_requests,
             get_repo_activity,
+            get_review_history,
             get_auth_status,
             open_pr,
             get_diff,
+            get_pr_files,
             load_progress,
             save_progress
         ])
         .run(tauri::generate_context!())
         .expect("Falha ao iniciar Lince");
+}
+
+#[tauri::command]
+async fn list_watches(app: tauri::AppHandle) -> Result<Vec<watches::Watch>, String> {
+    watches::list(&app).await
+}
+#[tauri::command]
+async fn set_watch(app: tauri::AppHandle, repo: String, enabled: bool) -> Result<(), String> {
+    watches::set(&app, repo, enabled).await
+}
+#[tauri::command]
+async fn poll_watches(app: tauri::AppHandle) -> Result<watches::PollStatus, String> {
+    watches::poll(&app).await
 }

@@ -67,3 +67,11 @@ Persistência migrada para `lince.sqlite3`, com SQLite incorporado via rusqlite.
 - Chromium + WebKit: 18 cenários passaram, incluindo seleção pesquisável com avatar, autor da PR, codebases, paginação, retorno à home e atualização com falha/retry via IPC simulado.
 - Workflow de release configurado para Wylp/Lince; valida versões e presença de quatro plataformas no latest.json antes da publicação manual do draft.
 - Ainda pendentes: execução do CI Windows/Linux, assinatura de distribuição Apple/Microsoft e instalação real de uma atualização entre duas releases publicadas. O teste de updater simulado não valida a instalação nativa nem a assinatura de um artefato real.
+
+## Histórico, alertas e snapshot em lote (2026-09-17)
+
+- 22 testes de navegação passaram em Chromium/WebKit: histórico vazio, persistência, filtro, retomada, falha/retry; alertas por repo, permissão negada, persistência e falha de polling.
+- 18 testes Rust passaram (mais 2 testes de rede ignorados por padrão), incluindo migração do schema 2 para 3, isolamento de escolhas por conta, contagem do histórico, agrupamento de blobs, limites e detecção de novas PRs. Clippy sem warnings.
+- Os 9 testes unitários frontend passaram e o build web foi concluído.
+- Teste real read-only com `cli/cli#14462`: dois arquivos carregados via árvores e lote GraphQL; diffs disponíveis no snapshot. Nenhum checkout alterado.
+- Ainda não foi validada a entrega visual das notificações nativas nas três plataformas; os testes de interface usam IPC/permissões simulados. Windows/Linux e o pipeline de release permanecem sujeitos ao CI e à validação dos builds instalados.
