@@ -602,7 +602,7 @@ export default function CodeWorkspace({
           </button>
           <button
             disabled={!semanticLanguage(language(tab.path))}
-            title="Referências semânticas disponíveis em JavaScript e TypeScript"
+            title="Referências nos arquivos carregados do contexto JS/TS atual"
             onClick={() => {
               void handle.current?.editor
                 .getAction("editor.action.referenceSearch.trigger")

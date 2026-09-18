@@ -1,3 +1,4 @@
+import { FileIcon, FolderIcon, Chevron } from "./FileIcon";
 import { useEffect, useMemo, useState } from "react";
 interface Node {
   dirs: Map<string, Node>;
@@ -56,7 +57,9 @@ export function RepositoryTree({
                   })
                 }
               >
-                {expanded.has(path) ? "⌄" : "›"} ▱ {name}
+                <Chevron open={expanded.has(path)} />
+                <FolderIcon name={name} open={expanded.has(path)} />
+                <span className="filename">{name}</span>
               </button>
               {expanded.has(path) && branch(child, path)}
             </li>
@@ -69,6 +72,7 @@ export function RepositoryTree({
               title={path}
               onClick={() => open(path)}
             >
+              <FileIcon path={path} />
               <span className="filename">{path.split("/").at(-1)}</span>
               {changed.has(path) && <span className="green">M</span>}
             </button>

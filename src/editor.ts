@@ -4,7 +4,7 @@ import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/language/json/json.worker?worker";
 import CssWorker from "monaco-editor/language/css/css.worker?worker";
 import HtmlWorker from "monaco-editor/language/html/html.worker?worker";
-import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker?worker";
+import TypeScriptWorker from "./review-ts.worker.js?worker";
 import { parse } from "jsonc-parser";
 export { monaco };
 (
@@ -211,6 +211,13 @@ export const options: monaco.editor.IStandaloneEditorConstructionOptions = {
   bracketPairColorization: { enabled: true },
   overviewRulerBorder: false,
 };
+interface ReviewWorker {
+  discoverDependencies(
+    sources: string[],
+    repositoryFiles: string[],
+  ): Promise<string[]>;
+  setScope(files: string[]): Promise<void>;
+}
 export class Project {
   readonly prefix: string;
   private owned = new Set<monaco.editor.ITextModel>();
@@ -218,12 +225,20 @@ export class Project {
   private queue: Promise<unknown> = Promise.resolve();
   private configuration = "";
   private disposed = false;
+  private configs = new Map<string, Document>();
+  private graphs = new Map<string, Set<string>>();
+  private fileSets: Record<Side, Set<string>>;
+
   constructor(
     private readonly id: string,
     readonly index: RepoIndex,
     private readonly notice: (message: string) => void = () => {},
   ) {
     this.prefix = `/lince/${encodeURIComponent(id)}/`;
+    this.fileSets = {
+      head: new Set(index.head.map((e) => e.path)),
+      base: new Set(index.base.map((e) => e.path)),
+    };
   }
   uri(path: string, side: Side) {
     return monaco.Uri.from({
@@ -254,13 +269,6 @@ export class Project {
     return model;
   }
   async initialize() {
-    let i = 0;
-    for (const doc of this.index.analysis) {
-      if (this.disposed) return;
-      if (doc.text !== null) this.model(doc);
-      if (++i % 50 === 0)
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
     for (const lang of syntaxLanguages) {
       this.disposables.push(
         monaco.languages.registerDefinitionProvider(lang, {
@@ -314,7 +322,7 @@ export class Project {
       );
     }
   }
-  private compiler(model: monaco.editor.ITextModel) {
+  private async compiler(model: monaco.editor.ITextModel) {
     const location = this.location(model.uri)!;
     const root = this.uri("", location.side).toString();
     let dir = location.path.split("/").slice(0, -1).join("/");
@@ -322,9 +330,19 @@ export class Project {
     while (true) {
       for (const name of ["tsconfig.json", "jsconfig.json"]) {
         const path = (dir ? dir + "/" : "") + name;
-        const doc = this.index.analysis.find(
-          (d) => d.side === location.side && d.path === path,
-        );
+        const cacheKey = `${location.side}:${path}`;
+        if (
+          this.fileSets[location.side].has(path) &&
+          !this.configs.has(cacheKey)
+        ) {
+          const docs = await invoke<Document[]>("read_repository_files", {
+            snapshotId: this.id,
+            side: location.side,
+            paths: [path],
+          });
+          this.configs.set(cacheKey, docs[0]);
+        }
+        const doc = this.configs.get(cacheKey);
         if (doc?.text) {
           config = { ...parse(doc.text)?.compilerOptions, dir };
           break;
@@ -366,7 +384,8 @@ export class Project {
       .catch(() => {})
       .then(async () => {
         if (this.disposed || model.isDisposed()) return undefined;
-        const compiler = this.compiler(model);
+        const compiler = await this.compiler(model);
+        if (this.disposed || model.isDisposed()) return undefined;
         const key = JSON.stringify(compiler);
         if (key !== this.configuration) {
           ts.typescriptDefaults.setCompilerOptions(compiler);
@@ -377,10 +396,110 @@ export class Project {
           ? ts.getJavaScriptWorker()
           : ts.getTypeScriptWorker());
         const worker = await getWorker(model.uri);
+        await this.prepareDependencies(
+          model,
+          worker as unknown as ReviewWorker,
+          getWorker,
+        );
+        if (this.disposed || model.isDisposed()) return undefined;
         return work(worker);
       });
     this.queue = task;
     return task;
+  }
+  private async prepareDependencies(
+    model: monaco.editor.ITextModel,
+    worker: ReviewWorker,
+    sync: (...uris: monaco.Uri[]) => Promise<unknown>,
+  ) {
+    const origin = this.location(model.uri)!;
+    const graphKey = model.uri.toString();
+    let graph = this.graphs.get(graphKey);
+    const known = this.index[origin.side];
+    const allUris = known.map((e) => this.uri(e.path, origin.side).toString());
+    const sizes = new Map(
+      known.map((e) => [this.uri(e.path, origin.side).toString(), e.size]),
+    );
+    const maxBytes = 32 * 1024 * 1024;
+    const load = async (uris: string[]) => {
+      const missing = uris.filter(
+        (uri) => !monaco.editor.getModel(monaco.Uri.parse(uri)),
+      );
+      // Eight files per batch keeps the existing 1 MiB per-file bound under 8 MiB.
+      for (let i = 0; i < missing.length; i += 8) {
+        if (this.disposed) return;
+        const paths = missing
+          .slice(i, i + 8)
+          .map((uri) => this.location(monaco.Uri.parse(uri))!.path);
+        const docs = await invoke<Document[]>("read_repository_files", {
+          snapshotId: this.id,
+          side: origin.side,
+          paths,
+        });
+        if (this.disposed) return;
+        for (const doc of docs) {
+          if (doc.text !== null) this.model(doc);
+          else
+            this.notice(
+              `Dependência indisponível: ${doc.path}. ${doc.reason ?? ""}`,
+            );
+        }
+      }
+      if (!this.disposed)
+        await sync(...uris.map((uri) => monaco.Uri.parse(uri)));
+    };
+    if (!graph) {
+      graph = new Set([graphKey]);
+      let frontier = [graphKey];
+      let bytes = sizes.get(graphKey) ?? 0;
+      let partial = false;
+      const started = performance.now();
+      while (frontier.length && !this.disposed) {
+        if (performance.now() - started > 15000 || graph.size > 10000) {
+          partial = true;
+          break;
+        }
+        const dependencies = await worker.discoverDependencies(
+          frontier,
+          allUris,
+        );
+        frontier = [];
+        for (const uri of dependencies) {
+          if (graph.has(uri)) continue;
+          const size = sizes.get(uri) ?? 0;
+          if (size > 1024 * 1024 || bytes + size > maxBytes) {
+            partial = true;
+            continue;
+          }
+          bytes += size;
+          graph.add(uri);
+          frontier.push(uri);
+        }
+        await load(frontier);
+      }
+      if (partial && !this.disposed)
+        this.notice(
+          "Análise das dependências deste arquivo ficou parcial por limite de memória, tempo ou tamanho. Navegue diretamente para carregar outros trechos.",
+        );
+      // Partial graphs can be retried after navigating; never claim a complete index.
+      if (!partial) {
+        if (this.graphs.size >= 12) this.graphs.clear();
+        this.graphs.set(graphKey, graph);
+      }
+    } else await load([...graph]);
+    if (this.disposed) return;
+    await worker.setScope([...graph]);
+    // Only the current graph participates in semantics. Evict idle project/side models;
+    // visible diff/preview models stay intact, so reading positions never jump.
+    for (const candidate of this.owned) {
+      if (
+        !graph.has(candidate.uri.toString()) &&
+        !candidate.isAttachedToEditor()
+      ) {
+        candidate.dispose();
+        this.owned.delete(candidate);
+      }
+    }
   }
   private locations(items: readonly any[] | undefined, source: monaco.Uri) {
     return (items ?? []).flatMap((item) => {

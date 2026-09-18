@@ -267,16 +267,6 @@ pub async fn read(repo: &Repository, side: &str, path: &str) -> Result<Document,
     let contents = blobs(&repo.path, vec![entry]).await?;
     Ok(document(entry, side, &contents))
 }
-fn analysis_file(path: &str) -> bool {
-    [
-        ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json",
-    ]
-    .iter()
-    .any(|ext| path.ends_with(ext))
-        && !path
-            .split('/')
-            .any(|p| matches!(p, "node_modules" | "dist" | "vendor" | "build"))
-}
 pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repository), String> {
     let path = root.join(format!(
         "{:x}.git",
@@ -355,25 +345,6 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
     {
         return Err("Conteúdo antes/depois dos arquivos alterados excede 64 MiB.".into());
     }
-    let mut analysis = Vec::new();
-    let mut analysis_bytes = 0;
-    let mut warnings = Vec::new();
-    for (side, entries) in [("head", &head), ("base", &base)] {
-        for e in entries
-            .iter()
-            .filter(|e| analysis_file(&e.path) && supported(e).is_ok())
-        {
-            if analysis.len() >= 2000 || analysis_bytes + e.size > 16 * 1024 * 1024 {
-                if warnings.is_empty() {
-                    warnings.push("Índice de JS/TS parcial: limite de 2.000 arquivos ou 16 MiB. Arquivos restantes continuam disponíveis no explorador.".into());
-                }
-                continue;
-            }
-            analysis_bytes += e.size;
-            analysis.push((side, e));
-            wanted.push(e);
-        }
-    }
     let content = blobs(&path, wanted).await?;
     let mut files = BTreeMap::new();
     let mut patch_bytes = 0;
@@ -429,10 +400,6 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
             },
         );
     }
-    let analysis = analysis
-        .into_iter()
-        .map(|(side, e)| document(e, side, &content))
-        .collect();
     Ok((
         LoadedPr { snapshot, files },
         Repository {
@@ -440,8 +407,8 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
             index: Index {
                 head,
                 base,
-                analysis,
-                warnings,
+                analysis: vec![],
+                warnings: vec![],
             },
         },
     ))
@@ -609,6 +576,22 @@ mod cache_tests {
         assert!(symbol_documents(&repository, "wrong", "python")
             .await
             .is_err());
+        assert!(repository.index.analysis.is_empty());
+        assert!(repository.index.warnings.is_empty());
+        let docs = read_many(&repository, "head", &["a.ts".into(), "unchanged.ts".into()])
+            .await
+            .unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs[0].text.as_ref().unwrap().contains("= 2"));
+        assert!(read_many(&repository, "head", &["../outside".into()])
+            .await
+            .is_err());
+        assert!(read_many(&repository, "wrong", &["a.ts".into()])
+            .await
+            .is_err());
+        assert!(read_many(&repository, "head", &vec!["a.ts".into(); 65])
+            .await
+            .is_err());
         assert!(!path.join("a.ts").exists());
         let second = prepare(snapshot, root.path()).await.unwrap();
         assert_eq!(second.0.files["a.ts"].after, bundle.files["a.ts"].after);
@@ -663,4 +646,43 @@ pub async fn symbol_documents(
         vec![]
     };
     Ok((docs, warnings))
+}
+
+/// Local, bounded batch used by the on-demand JS/TS dependency graph.
+pub async fn read_many(
+    repo: &Repository,
+    side: &str,
+    paths: &[String],
+) -> Result<Vec<Document>, String> {
+    if paths.len() > 64 {
+        return Err("Lote local acima de 64 arquivos".into());
+    }
+    let entries = match side {
+        "head" => &repo.index.head,
+        "base" => &repo.index.base,
+        _ => return Err("Lado inválido".into()),
+    };
+    let map: HashMap<_, _> = entries.iter().map(|e| (e.path.as_str(), e)).collect();
+    let wanted = paths
+        .iter()
+        .map(|path| {
+            map.get(path.as_str())
+                .copied()
+                .ok_or("Arquivo não pertence ao snapshot".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if wanted
+        .iter()
+        .filter(|e| supported(e).is_ok())
+        .map(|e| e.size)
+        .sum::<u64>()
+        > 8 * 1024 * 1024
+    {
+        return Err("Lote local acima de 8 MiB".into());
+    }
+    let content = blobs(&repo.path, wanted.clone()).await?;
+    Ok(wanted
+        .into_iter()
+        .map(|e| document(e, side, &content))
+        .collect())
 }

@@ -30,7 +30,19 @@ A cobertura inicial inclui funções/métodos e tipos/classes; não é uma busca
 
 A PR ocupa uma linha: título, identificação e progresso. Autor, branches e commits ficam em **Detalhes**. Controles e abas foram compactados; o código ocupa aproximadamente 70% da área de uma janela de 1440×940 com a árvore recolhida. Abrir o explorador temporariamente não redimensiona o diff. Imports JS/TS usam `originSelectionRange` para destacar o caminho inteiro, por exemplo `@/services/orders`, mantendo a resolução do destino no serviço TypeScript.
 
-A configuração lê `baseUrl` e `paths` diretamente do `tsconfig.json`/`jsconfig.json` mais próximo. Ainda não resolve `extends`, project references, pacotes de workspace ou dependências externas que precisem de instalação. O índice inicial admite 2.000 documentos JS/TS/JSON e 16 MiB, somando base e head; acima disso mostra aviso de índice parcial. Arquivos restantes continuam acessíveis localmente pelo explorador. A resolução depende dos documentos disponíveis no índice.
+### JS/TS por demanda
+
+A abertura da PR não indexa mais os primeiros 2.000 arquivos nem carrega 16 MiB de JS/TS dos dois lados. Os diffs alterados continuam completos e preparados em lote. Ao pedir uma definição, preview, hover ou referências, o worker TypeScript identifica imports, re-exports, `require` e referências de arquivo do documento consultado. As dependências transitivas são resolvidas com o próprio resolvedor TypeScript, usando a árvore do snapshot, e lidas em lotes do Git local. Ciclos são visitados uma única vez. Arquivos de outros serviços que não fazem parte desse grafo não são carregados.
+
+A configuração lê `baseUrl` e `paths` diretamente do `tsconfig.json`/`jsconfig.json` mais próximo, sob demanda. Ainda não resolve `extends`, project references, pacotes de workspace ou dependências externas que precisem de instalação. Scripts globais sem imports e referências em consumidores ainda não carregados não são indexados automaticamente: a busca de referências considera o grafo carregado, não promete todas as referências do repositório.
+
+Base e head têm grafos separados; a base só é analisada quando consultada. Até 12 grafos de caminhos são reaproveitados durante a sessão. Modelos fora do grafo atual são liberados quando não estão ligados a um editor/preview visível. O diff aberto continua intacto, incluindo posição e seleção. O worker restringe os arquivos participantes da análise ao grafo ativo.
+
+Há um orçamento de proteção por consulta: 32 MiB de dependências, 10.000 caminhos, verificação de tempo de 15 s entre lotes e os limites textuais existentes por arquivo. Se atingido, o aviso explica que as **dependências daquele arquivo** ficaram parciais; o tamanho total do repositório por si só não causa aviso. O limite não é garantia de duração máxima do worker. A versão do Monaco está fixada no lockfile; seu worker foi estendido localmente para reutilizar o parser e o resolvedor já incorporados.
+
+### Ícones
+
+As árvores Alterações e Explorador usam SVGs locais do **Material Icon Theme 5.38.1**, com ícones por extensão/nome e pastas abertas/fechadas. Testes, workflows, GitHub, SQL e Docker têm ícones específicos. Estado de revisão permanece separado do tipo de arquivo. Origem e licença MIT estão em `src/assets/material/`. Não há CDN ou fonte de ícones remota.
 
 ## Cache Git separado
 

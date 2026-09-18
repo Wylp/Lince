@@ -287,6 +287,7 @@ pub fn run() {
             get_repository_index,
             get_code_definitions,
             read_repository_file,
+            read_repository_files,
             post_review_comment,
             load_progress,
             save_progress
@@ -482,4 +483,26 @@ async fn get_code_definitions(
     tauri::async_runtime::spawn_blocking(move || symbols::find(&index, lang, &doc, line, column))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn read_repository_files(
+    snapshot_id: String,
+    side: String,
+    paths: Vec<String>,
+    state: State<'_, Backend>,
+) -> Result<Vec<repository::Document>, String> {
+    let repo = {
+        let _loading = state.loading.lock().await;
+        if !state.bundles.lock().await.contains_key(&snapshot_id) {
+            return Err("Revisão expirada".into());
+        }
+        state
+            .repository
+            .lock()
+            .await
+            .clone()
+            .ok_or("Repositório não carregado")?
+    };
+    repository::read_many(&repo, &side, &paths).await
 }

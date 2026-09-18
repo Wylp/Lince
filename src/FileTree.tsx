@@ -1,3 +1,4 @@
+import { FileIcon, FolderIcon, Chevron } from "./FileIcon";
 import type { ChangedFile, ReviewProgress } from "./model";
 import { statusLabels } from "./model";
 interface Node {
@@ -33,7 +34,14 @@ export function FileTree({
           <li key={dir}>
             <details open>
               <summary title={prefix + dir}>
-                <span className="folder-icon">▱</span> {dir}
+                <Chevron />
+                <span className="folder-closed">
+                  <FolderIcon name={dir} />
+                </span>
+                <span className="folder-open">
+                  <FolderIcon name={dir} open />
+                </span>
+                <span className="filename">{dir}</span>
               </summary>
               {branch(child, prefix + dir + "/")}
             </details>
@@ -49,15 +57,16 @@ export function FileTree({
               onClick={() => select(file.path)}
               title={`${file.path} · ${statusLabels[file.status] ?? file.status}${progress.files[file.path]?.reviewed ? " · Revisado" : ""}`}
             >
+              <FileIcon path={file.path} />
+              <span className="filename">{file.path.split("/").at(-1)}</span>
               <span
                 className={`file-state ${progress.files[file.path]?.reviewed ? "done" : ""}`}
                 aria-label={
                   progress.files[file.path]?.reviewed ? "Revisado" : "Pendente"
                 }
               >
-                {progress.files[file.path]?.reviewed ? "✓" : "○"}
+                {progress.files[file.path]?.reviewed ? "✓" : ""}
               </span>
-              <span className="filename">{file.path.split("/").at(-1)}</span>
               <span
                 className={`status-letter ${file.status}`}
                 aria-label={statusLabels[file.status] ?? file.status}

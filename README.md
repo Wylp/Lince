@@ -37,7 +37,7 @@ Consulte a [lista oficial do Tauri](https://tauri.app/start/prerequisites/) para
 
 O workspace usa Monaco, com código **somente leitura**, diff lado a lado, abas e explorador recolhível que abre por hover/foco e pode ser fixado. O cabeçalho compacto prioriza a área de código. Cmd/Ctrl+P abre arquivos; Cmd/Ctrl+click ou F12 navega para definições JS/TS, inclusive fora do diff; Alt+F12 mostra um preview. Python, Java, C#, Go, Rust, C, C++ e PHP também têm previews de declarações candidatas por análise sintática, sem exigir servidores externos. Comentários de linha têm formulário separado e envio explícito ao GitHub.
 
-O Lince mantém um cache Git próprio dos commits, sem alterar seu checkout. **Atualizar PR** busca novos commits. Código permanece nesse cache em disco; progresso continua no SQLite. [Atalhos, cache e limites por linguagem](docs/code-workspace.md).
+O Lince mantém um cache Git próprio dos commits, sem alterar seu checkout. A navegação JS/TS carrega as dependências do arquivo consultado sob demanda, separando base e head; não pré-indexa o monorepo inteiro. As árvores usam ícones locais do Material Icon Theme. **Atualizar PR** busca novos commits. Código permanece nesse cache em disco; progresso continua no SQLite. [Atalhos, cache e limites por linguagem](docs/code-workspace.md).
 
 ## Listar PRs e configurar monorepos
 

@@ -258,8 +258,12 @@ test.beforeEach(async ({ page }) => {
           (path === "src/controller.ts"
             ? "import { calculateTotal } from '@/utils';\nexport function controller() { return calculateTotal(2); }\n"
             : path === "src/utils.ts"
-              ? "export function calculateTotal(value: number) {\n  return value * 10;\n}\n"
-              : "export {};\n") +
+              ? win.chainedImports
+                ? "export { calculateTotal } from './pricing';\n"
+                : "export function calculateTotal(value: number) {\n  return value * 10;\n}\n"
+              : path === "src/pricing.ts"
+                ? "import './utils';\nexport function calculateTotal(value: number) { return value * 10; }\n"
+                : "export {};\n") +
           Array.from(
             { length: 200 },
             (_, i) => `const line${i} = "${path}";`,
@@ -315,6 +319,18 @@ test.beforeEach(async ({ page }) => {
         if (command === "get_repository_index")
           return {
             head: [
+              ...Array.from({ length: 2100 }, (_, i) => ({
+                path: `unrelated/module-${i}.ts`,
+                oid: "u",
+                mode: "100644",
+                size: 8000,
+              })),
+              {
+                path: "tsconfig.json",
+                oid: "config",
+                mode: "100644",
+                size: 150,
+              },
               ...files.map((f) => ({
                 path: f.path,
                 oid: "abc",
@@ -322,53 +338,70 @@ test.beforeEach(async ({ page }) => {
                 size: 3000,
               })),
               { path: "src/utils.ts", oid: "def", mode: "100644", size: 3000 },
-              { path: "python/caller.py", oid: "py", mode: "100644", size: 50 },
-            ],
-            base: files
-              .filter((f) => f.status !== "added")
-              .map((f) => ({
-                path: f.path,
-                oid: "abc",
+              {
+                path: "src/pricing.ts",
+                oid: "pricing",
                 mode: "100644",
                 size: 3000,
-              })),
-            analysis: ["head", "base"].flatMap((side) =>
-              [
-                "src/controller.ts",
-                "src/utils.ts",
-                "src/service.ts",
-                "tsconfig.json",
-              ].map((path) => ({
-                side,
-                path,
-                text:
-                  path === "tsconfig.json"
-                    ? JSON.stringify({
-                        compilerOptions: {
-                          baseUrl: ".",
-                          paths: { "@/*": ["src/*"] },
-                        },
-                      })
-                    : textFor(path).replace(
-                        "* 10",
-                        side === "base" ? "* 5" : "* 10",
-                      ),
-                reason: null,
-              })),
-            ),
+              },
+              { path: "python/caller.py", oid: "py", mode: "100644", size: 50 },
+            ],
+            base: [
+              {
+                path: "tsconfig.json",
+                oid: "config",
+                mode: "100644",
+                size: 150,
+              },
+              {
+                path: "src/utils.ts",
+                oid: "helper-base",
+                mode: "100644",
+                size: 3000,
+              },
+              ...files
+                .filter((f) => f.status !== "added")
+                .map((f) => ({
+                  path: f.path,
+                  oid: "abc",
+                  mode: "100644",
+                  size: 3000,
+                })),
+            ],
+            analysis: [],
             warnings: [],
           };
-        if (command === "read_repository_file")
-          return {
-            path: args.path,
+        if (
+          command === "read_repository_files" ||
+          command === "read_repository_file"
+        ) {
+          win.codeReads ??= [];
+          const paths =
+            command === "read_repository_files" ? args.paths : [args.path];
+          win.codeReads.push({ side: args.side, paths });
+          const docs = paths.map((path: string) => ({
+            path,
             side: args.side,
-            text: args.path.endsWith(".py")
-              ? args.path.endsWith("caller.py")
-                ? "from service import calculate\ncalculate(2)\n"
-                : `def calculate(value):\n    return value * ${args.path.includes("other") ? 3 : 2}\n`
-              : textFor(args.path),
+            text:
+              path === "tsconfig.json"
+                ? JSON.stringify({
+                    compilerOptions: {
+                      baseUrl: ".",
+                      paths: { "@/*": ["src/*"] },
+                    },
+                  })
+                : path.endsWith(".py")
+                  ? path.endsWith("caller.py")
+                    ? "from service import calculate\ncalculate(2)\n"
+                    : `def calculate(value):\n    return value * ${path.includes("other") ? 3 : 2}\n`
+                  : textFor(path).replace(
+                      "* 10",
+                      args.side === "base" ? "* 5" : "* 10",
+                    ),
             reason: null,
-          };
+          }));
+          return command === "read_repository_files" ? docs : docs[0];
+        }
         if (command === "post_review_comment") {
           if (win.commentError) throw "A PR mudou. Atualize a revisão";
           win.lastComment = args;
@@ -1006,4 +1039,72 @@ test("previews syntax candidates outside the diff, exposes limits and stays read
   expect(await page.evaluate(() => (window as any).lastDefinition.side)).toBe(
     "head",
   );
+});
+
+test("loads JS dependencies on demand beyond 2000 unrelated files and only on requested side", async ({
+  page,
+}) => {
+  await open(page);
+  expect(await page.evaluate(() => (window as any).codeReads ?? [])).toEqual(
+    [],
+  );
+  const call = page
+    .locator(".monaco-diff-editor .editor.modified .view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .last();
+  await call.click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  await expect(page.getByRole("dialog").getByRole("heading")).toContainText(
+    "src/utils.ts",
+    { timeout: 15000 },
+  );
+  const reads = await page.evaluate(() => (window as any).codeReads);
+  expect(reads.every((r: any) => r.side === "head")).toBe(true);
+  expect(reads.flatMap((r: any) => r.paths).sort()).toEqual([
+    "src/utils.ts",
+    "tsconfig.json",
+  ]);
+  await expect(page.locator(".code-workspace")).not.toContainText(
+    "Índice de JS/TS parcial",
+  );
+  await page.getByRole("button", { name: "Fechar prévia" }).click();
+  await call.click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(await page.evaluate(() => (window as any).codeReads.length)).toBe(
+    reads.length,
+  );
+});
+
+test("follows re-exports and terminates circular dependency graphs", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).chainedImports = true;
+  });
+  await open(page);
+  await page
+    .locator(".monaco-diff-editor .editor.modified .view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .last()
+    .click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  await expect(page.getByRole("dialog").getByRole("heading")).toContainText(
+    "src/pricing.ts",
+    { timeout: 15000 },
+  );
+  const paths = await page.evaluate(() =>
+    (window as any).codeReads.flatMap((r: any) => r.paths),
+  );
+  expect(paths.sort()).toEqual([
+    "src/pricing.ts",
+    "src/utils.ts",
+    "tsconfig.json",
+  ]);
 });

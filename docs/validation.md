@@ -1,5 +1,14 @@
 # Validação
 
+## Dependências JS/TS por demanda e ícones Material — 18/09/2026
+
+- Removido o pré-carregamento inicial de JS/TS. O teste usa mais de 2.100 arquivos não relacionados e verifica que uma definição carrega apenas o `tsconfig` e a dependência consultada, sem ler a base ou os demais módulos. Repetir a consulta reutiliza os documentos.
+- Teste adicional cobre re-export transitivo e ciclo de imports. A resolução usa o parser/resolvedor TypeScript do worker Monaco, sem regex de imports. Os cenários existentes continuam cobrindo aliases, lado antigo, previews somente leitura, scroll e links completos.
+- Os 38 cenários Playwright passaram no build de produção (Chromium/WebKit), além dos 22 testes Rust e 9 testes unitários frontend. A fixture Git também valida a nova leitura em lote, isolamento de lados, caminhos inválidos, tamanho do lote e ausência de documentos de análise na abertura.
+- Build web, build desktop macOS arm64 (`--debug --no-bundle`), Clippy e formatação passaram. Ícones Material Icon Theme 5.38.1 incorporados como SVGs locais, com licença MIT; screenshot da árvore inspecionado.
+- O worker estendido tem ~7,03 MB. O empacotador também emite o worker padrão do Monaco, não utilizado para as consultas customizadas; isso acrescenta tamanho aos assets de distribuição. O módulo de revisão é ~4 MB antes de gzip. A home continua carregada separadamente.
+- Limitações: referências são relativas ao grafo carregado; `extends`, project references, dependências externas e scripts globais não importados não são resolvidos automaticamente. Há orçamento de proteção por consulta. Isso ainda não equivale à infraestrutura completa do VS Code. Windows/Linux nativos continuam sem validação local.
+
 ## Previews em dez linguagens e layout compacto — 18/09/2026
 
 - Build de produção e 9 testes unitários frontend passaram com Node 24 LTS.
