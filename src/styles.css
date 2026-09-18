@@ -1883,3 +1883,245 @@ progress::-webkit-progress-value {
   gap: 12px;
   margin-top: 16px;
 }
+
+/* Review chrome: one compact PR row; metadata is available on demand. */
+.reviewing .topbar {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+.reviewing .topbar .brand {
+  font-size: 19px;
+  gap: 5px;
+}
+.reviewing .topbar .brand-mark {
+  width: 28px;
+  height: 28px;
+}
+.reviewing .topbar .preview-badge {
+  display: none;
+}
+.reviewing .open-form {
+  height: 30px;
+}
+.reviewing .topbar button {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.compact-pr-header {
+  height: 40px;
+  padding: 4px 12px;
+  gap: 12px;
+  align-items: center;
+  position: relative;
+}
+.compact-pr-header .pr-number {
+  color: var(--green);
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-pr-header h1 {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  margin: 0;
+  letter-spacing: 0;
+}
+.compact-pr-header > button {
+  padding: 3px 8px;
+}
+.compact-pr-header .progress-summary {
+  width: 120px;
+  gap: 3px;
+  font-size: 10px;
+}
+.compact-pr-header .progress-summary strong {
+  font-size: 12px;
+}
+.pr-details {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pr-details summary {
+  cursor: pointer;
+}
+.pr-details-popover {
+  position: absolute;
+  right: 12px;
+  top: 36px;
+  z-index: 35;
+  padding: 16px;
+  background: #17251d;
+  border: 1px solid #405c49;
+  border-radius: 7px;
+  box-shadow: 0 8px 25px #0008;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(600px, 80vw);
+  overflow-wrap: anywhere;
+}
+.code-workspace {
+  position: relative;
+}
+.explorer-dock {
+  position: relative;
+  flex: 0 0 40px;
+  width: 40px;
+  min-height: 0;
+  background: #111c16;
+  border-right: 1px solid #2c3d32;
+  z-index: 12;
+}
+.explorer-dock.pinned {
+  flex-basis: 320px;
+  width: 320px;
+}
+.explorer-rail {
+  width: 39px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding-top: 6px;
+  color: #8fb69c;
+}
+.explorer-rail button {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 22px;
+  color: #9acaaa;
+}
+.explorer-rail small {
+  font-size: 10px;
+}
+.code-workspace .explorer-dock .sidebar {
+  position: absolute;
+  left: 39px;
+  top: 0;
+  bottom: 0;
+  width: 280px;
+  min-width: 280px;
+  max-width: 280px;
+  resize: none;
+  visibility: hidden;
+  pointer-events: none;
+  background: #142019;
+  box-shadow: 8px 0 20px #0005;
+}
+.code-workspace .explorer-dock.expanded .sidebar {
+  visibility: visible;
+  pointer-events: auto;
+}
+.explorer-dock.pinned .sidebar {
+  box-shadow: none;
+}
+.explorer-heading {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 11px;
+  color: #b9d6c3;
+}
+.explorer-heading button {
+  padding: 1px 7px;
+  border: 0;
+  background: transparent;
+}
+.code-workspace .explorer-tabs {
+  padding: 4px 8px;
+}
+.code-workspace .explorer-tabs button {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.code-workspace .sidebar .search {
+  margin: 8px;
+}
+.code-workspace .sidebar .pending-filter {
+  padding: 4px 12px 8px;
+}
+.code-workspace .file-header {
+  min-height: 34px;
+  padding: 4px 12px;
+  gap: 8px;
+}
+.code-workspace .file-heading {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.code-workspace .file-heading strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-workspace .file-heading small {
+  flex-basis: auto;
+  white-space: nowrap;
+}
+.code-workspace .file-actions {
+  flex-shrink: 0;
+}
+.code-workspace .file-actions button,
+.code-workspace .review-toggle {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.code-workspace .editor-tabs {
+  min-height: 30px;
+}
+.code-workspace .editor-tab button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.code-workspace .code-toolbar {
+  min-height: 29px;
+  padding: 2px 8px;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.code-workspace .code-toolbar button,
+.code-workspace .code-toolbar > span {
+  white-space: nowrap;
+}
+.code-workspace .code-toolbar button:disabled {
+  opacity: 0.4;
+}
+.code-workspace .reader-footer {
+  min-height: 21px;
+  padding: 3px 10px;
+  font-size: 10px;
+}
+.reviewing .statusbar {
+  min-height: 22px;
+  height: 22px;
+  padding: 3px 12px;
+  font-size: 10px;
+}
+@media (max-width: 1100px) {
+  .reviewing .notification-status {
+    display: none;
+  }
+  .code-workspace .code-toolbar kbd {
+    display: none;
+  }
+  .code-workspace .code-toolbar > span {
+    font-size: 9px;
+  }
+  .code-workspace .file-heading small {
+    display: none;
+  }
+}

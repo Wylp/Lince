@@ -510,16 +510,28 @@ mod cache_tests {
             "export function helper() { return 10; }\n",
         )
         .await;
+        let python_base = command(
+            &path,
+            &["hash-object", "-w", "--stdin"],
+            "def old_only(): return 1\n",
+        )
+        .await;
+        let python_head = command(
+            &path,
+            &["hash-object", "-w", "--stdin"],
+            "def new_only(): return 2\n",
+        )
+        .await;
         let base_tree = command(
             &path,
             &["mktree"],
-            &format!("100644 blob {before}\ta.ts\n100644 blob {helper}\tunchanged.ts\n"),
+            &format!("100644 blob {before}\ta.ts\n100644 blob {python_base}\tlibrary.py\n100644 blob {helper}\tunchanged.ts\n"),
         )
         .await;
         let head_tree = command(
             &path,
             &["mktree"],
-            &format!("100644 blob {after}\ta.ts\n100644 blob {helper}\tunchanged.ts\n"),
+            &format!("100644 blob {after}\ta.ts\n100644 blob {python_head}\tlibrary.py\n100644 blob {helper}\tunchanged.ts\n"),
         )
         .await;
         let base = command(&path, &["commit-tree", &base_tree, "-m", "base"], "").await;
@@ -568,8 +580,87 @@ mod cache_tests {
             .contains("= 2"));
         assert!(read(&repository, "head", "../a.ts").await.is_err());
         assert!(read(&repository, "wrong", "a.ts").await.is_err());
+        for (side, present, absent) in [
+            ("base", "old_only", "new_only"),
+            ("head", "new_only", "old_only"),
+        ] {
+            let (docs, warnings) = symbol_documents(&repository, side, "python").await.unwrap();
+            assert_eq!(docs.len(), 1);
+            assert!(warnings.is_empty());
+            let index = crate::symbols::build("python", docs, warnings).unwrap();
+            let query = |name: &str| Document {
+                path: "caller.py".into(),
+                side: side.into(),
+                text: Some(Arc::new(format!("{name}()"))),
+                reason: None,
+            };
+            assert_eq!(
+                crate::symbols::find(&index, "python", &query(present), 1, 2)
+                    .unwrap()
+                    .targets
+                    .len(),
+                1
+            );
+            assert!(crate::symbols::find(&index, "python", &query(absent), 1, 2)
+                .unwrap()
+                .targets
+                .is_empty());
+        }
+        assert!(symbol_documents(&repository, "wrong", "python")
+            .await
+            .is_err());
         assert!(!path.join("a.ts").exists());
         let second = prepare(snapshot, root.path()).await.unwrap();
         assert_eq!(second.0.files["a.ts"].after, bundle.files["a.ts"].after);
     }
+}
+
+/// One local Git batch per language and side, on first definition lookup.
+pub async fn symbol_documents(
+    repo: &Repository,
+    side: &str,
+    lang: &str,
+) -> Result<(Vec<Document>, Vec<String>), String> {
+    let entries = match side {
+        "head" => &repo.index.head,
+        "base" => &repo.index.base,
+        _ => return Err("Lado inválido".into()),
+    };
+    let mut selected = Vec::new();
+    let mut bytes = 0;
+    let mut skipped = 0;
+    for entry in entries
+        .iter()
+        .filter(|e| crate::symbols::accepts(lang, &e.path))
+    {
+        if entry.path.split('/').any(|p| {
+            matches!(
+                p,
+                "node_modules" | "vendor" | "dist" | "build" | ".venv" | "venv" | "target"
+            )
+        }) {
+            continue;
+        }
+        if supported(entry).is_err()
+            || selected.len() >= 2000
+            || bytes + entry.size > 16 * 1024 * 1024
+        {
+            skipped += 1;
+            continue;
+        }
+        selected.push(entry);
+        bytes += entry.size;
+    }
+    let content = blobs(&repo.path, selected.clone()).await?;
+    let docs: Vec<_> = selected
+        .into_iter()
+        .map(|entry| document(entry, side, &content))
+        .collect();
+    skipped += docs.iter().filter(|d| d.text.is_none()).count();
+    let warnings = if skipped > 0 {
+        vec![format!("Índice de declarações parcial: {skipped} arquivos omitidos por formato ou limite de 2.000 arquivos / 16 MiB por linguagem e lado.")]
+    } else {
+        vec![]
+    };
+    Ok((docs, warnings))
 }

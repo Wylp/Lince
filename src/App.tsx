@@ -179,7 +179,9 @@ export default function App() {
   const total = snapshot?.files.length ?? 0;
 
   return (
-    <div className="app">
+    <div
+      className={`app ${snapshot && review && !browsing && !historyOpen ? "reviewing" : ""}`}
+    >
       <Titlebar
         context={
           snapshot ? `${snapshot.repo} / PR #${snapshot.number}` : undefined
@@ -333,42 +335,53 @@ export default function App() {
         />
       ) : snapshot && review ? (
         <>
-          <section className="pr-header">
-            <div>
-              <div className="eyebrow">
-                {snapshot.repo} <span>/ PULL REQUEST #{snapshot.number}</span>
-              </div>
-              <h1>{snapshot.title}</h1>
-              <div className="pr-meta">
-                <button
-                  disabled={loading}
-                  onClick={() => {
-                    void open(snapshot.url);
-                  }}
-                  title="Consultar novos commits e sincronizar o cache local"
-                >
-                  ↻ Atualizar PR
-                </button>
+          <section className="pr-header compact-pr-header">
+            <span className="pr-number" title={snapshot.repo}>
+              {snapshot.repo} #{snapshot.number}
+            </span>
+            <h1 title={snapshot.title}>{snapshot.title}</h1>
+            <details className="pr-details">
+              <summary
+                aria-label="Detalhes da PR"
+                title="Autor, branches e commits"
+              >
+                Detalhes
+              </summary>
+              <div className="pr-details-popover">
                 <span className="author-identity">
                   <Avatar login={snapshot.author} size={22} />@{snapshot.author}
                 </span>
-                <span className="branch">{snapshot.headBranch}</span>
-                <span>→</span>
-                <span className="branch">{snapshot.baseBranch}</span>
-                <span
-                  title={`Base comum: ${snapshot.mergeBase}\nHead: ${snapshot.headSha}`}
-                >
-                  snapshot {snapshot.headSha.slice(0, 7)}
+                <span>
+                  {snapshot.headBranch} → {snapshot.baseBranch}
+                </span>
+                <span>
+                  Base comum: {snapshot.mergeBase.slice(0, 7)} · Head:{" "}
+                  {snapshot.headSha.slice(0, 7)}
                 </span>
               </div>
-            </div>
-            <div className="progress-summary">
-              <strong>
-                {count}
-                <span> / {total}</span>
-              </strong>
-              <span>arquivos revisados</span>
-              <progress value={count} max={total || 1} />
+            </details>
+            <button
+              disabled={loading}
+              onClick={() => {
+                void open(snapshot.url);
+              }}
+              title="Consultar novos commits e sincronizar o cache local"
+              aria-label="Atualizar PR"
+            >
+              ↻
+            </button>
+            <div
+              className="progress-summary"
+              title={`${count} de ${total} arquivos revisados`}
+            >
+              <span>
+                <strong>{count}</strong> / {total} revisados
+              </span>
+              <progress
+                aria-label="Progresso da revisão"
+                value={count}
+                max={total || 1}
+              />
             </div>
           </section>
           <Suspense

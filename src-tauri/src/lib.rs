@@ -3,6 +3,7 @@ mod discovery;
 mod github;
 mod progress;
 mod repository;
+mod symbols;
 mod watches;
 use github::{FileDiff, Snapshot};
 use std::collections::HashMap;
@@ -13,6 +14,7 @@ struct Backend {
     bundles: Mutex<HashMap<String, std::sync::Arc<batch::LoadedPr>>>,
     repository: Mutex<Option<std::sync::Arc<repository::Repository>>>,
     loading: Mutex<()>,
+    symbols: Mutex<HashMap<String, std::sync::Arc<symbols::Index>>>,
     disk: Mutex<()>,
     monitor: Mutex<()>,
     network: tokio::sync::Semaphore,
@@ -23,6 +25,7 @@ impl Default for Backend {
             bundles: Mutex::new(HashMap::new()),
             repository: Mutex::new(None),
             loading: Mutex::new(()),
+            symbols: Mutex::new(HashMap::new()),
             disk: Mutex::new(()),
             monitor: Mutex::new(()),
             network: tokio::sync::Semaphore::new(3),
@@ -282,6 +285,7 @@ pub fn run() {
             get_diff,
             get_pr_files,
             get_repository_index,
+            get_code_definitions,
             read_repository_file,
             post_review_comment,
             load_progress,
@@ -429,4 +433,53 @@ mod comment_tests {
         assert!(!comment_line(patch, "RIGHT", 3));
         assert!(!comment_line(patch, "LEFT", 6));
     }
+}
+
+#[tauri::command]
+async fn get_code_definitions(
+    snapshot_id: String,
+    side: String,
+    path: String,
+    line: u32,
+    column: u32,
+    state: State<'_, Backend>,
+) -> Result<symbols::Definitions, String> {
+    let repo = {
+        let _loading = state.loading.lock().await;
+        if !state.bundles.lock().await.contains_key(&snapshot_id) {
+            return Err("Revisão expirada".into());
+        }
+        state
+            .repository
+            .lock()
+            .await
+            .clone()
+            .ok_or("Repositório não carregado")?
+    };
+    let lang = symbols::language(&path).ok_or("Linguagem sem parser de definições")?;
+    // Validate exact snapshot membership before populating a cache.
+    let doc = repository::read(&repo, &side, &path).await?;
+    let key = format!("{snapshot_id}:{side}:{lang}");
+    let index = {
+        let mut cache = state.symbols.lock().await;
+        if let Some(index) = cache.get(&key) {
+            index.clone()
+        } else {
+            let (docs, warnings) = repository::symbol_documents(&repo, &side, lang).await?;
+            let index = std::sync::Arc::new(
+                tauri::async_runtime::spawn_blocking(move || symbols::build(lang, docs, warnings))
+                    .await
+                    .map_err(|e| e.to_string())??,
+            );
+            // Bound total retained indexes, not just the individual language batch.
+            if cache.len() >= 6 {
+                cache.clear();
+            }
+            cache.insert(key, index.clone());
+            index
+        }
+    };
+    tauri::async_runtime::spawn_blocking(move || symbols::find(&index, lang, &doc, line, column))
+        .await
+        .map_err(|e| e.to_string())?
 }

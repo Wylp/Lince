@@ -1,4 +1,5 @@
 import * as monaco from "monaco-editor";
+import { invoke } from "@tauri-apps/api/core";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/language/json/json.worker?worker";
 import CssWorker from "monaco-editor/language/css/css.worker?worker";
@@ -115,6 +116,13 @@ export function language(path: string): string {
         json: "json",
         rs: "rust",
         py: "python",
+        pyi: "python",
+        cc: "cpp",
+        cxx: "cpp",
+        hpp: "cpp",
+        hh: "cpp",
+        hxx: "cpp",
+        phtml: "php",
         go: "go",
         java: "java",
         kt: "kotlin",
@@ -141,6 +149,45 @@ export function language(path: string): string {
       } as Record<string, string>
     )[ext ?? ""] ?? "plaintext"
   );
+}
+export const syntaxLanguages = [
+  "python",
+  "java",
+  "csharp",
+  "go",
+  "rust",
+  "c",
+  "cpp",
+  "php",
+];
+export const semanticLanguage = (id: string) =>
+  ["typescript", "javascript"].includes(id);
+// Only controls the link decoration; the language service still resolves the target.
+export function referenceRange(
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
+) {
+  const line = model.getLineContent(position.lineNumber);
+  for (const match of line.matchAll(/(['"])([^'"\r\n]+)\1/g)) {
+    const start = match.index! + 2,
+      end = start + match[2].length;
+    if (position.column >= start && position.column <= end)
+      return new monaco.Range(
+        position.lineNumber,
+        start,
+        position.lineNumber,
+        end,
+      );
+  }
+  const word = model.getWordAtPosition(position);
+  return word
+    ? new monaco.Range(
+        position.lineNumber,
+        word.startColumn,
+        position.lineNumber,
+        word.endColumn,
+      )
+    : undefined;
 }
 export const options: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: "lince",
@@ -172,8 +219,9 @@ export class Project {
   private configuration = "";
   private disposed = false;
   constructor(
-    id: string,
+    private readonly id: string,
     readonly index: RepoIndex,
+    private readonly notice: (message: string) => void = () => {},
   ) {
     this.prefix = `/lince/${encodeURIComponent(id)}/`;
   }
@@ -212,6 +260,14 @@ export class Project {
       if (doc.text !== null) this.model(doc);
       if (++i % 50 === 0)
         await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    for (const lang of syntaxLanguages) {
+      this.disposables.push(
+        monaco.languages.registerDefinitionProvider(lang, {
+          provideDefinition: (model, position) =>
+            this.definitions(model, position),
+        }),
+      );
     }
     for (const lang of ["typescript", "javascript"]) {
       this.disposables.push(
@@ -351,10 +407,78 @@ export class Project {
       ];
     });
   }
+  private async syntaxDefinitions(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+  ): Promise<monaco.languages.LocationLink[]> {
+    const origin = this.location(model.uri);
+    if (!origin || this.disposed) return [];
+    this.notice("Buscando declarações no snapshot local…");
+    try {
+      const result = await invoke<{
+        targets: {
+          path: string;
+          line: number;
+          column: number;
+          endLine: number;
+          endColumn: number;
+        }[];
+        warnings: string[];
+        indexedFiles: number;
+      }>("get_code_definitions", {
+        snapshotId: this.id,
+        side: origin.side,
+        path: origin.path,
+        line: position.lineNumber,
+        column: position.column,
+      });
+      if (this.disposed || model.isDisposed()) return [];
+      const matches: monaco.languages.LocationLink[] = [];
+      for (const target of result.targets) {
+        if (this.disposed) return [];
+        const uri = this.uri(target.path, origin.side);
+        if (!monaco.editor.getModel(uri)) {
+          const doc = await invoke<Document>("read_repository_file", {
+            snapshotId: this.id,
+            side: origin.side,
+            path: target.path,
+          });
+          if (this.disposed) return [];
+          if (doc.text === null) continue;
+          this.model(doc);
+        }
+        matches.push({
+          uri,
+          range: new monaco.Range(
+            target.line,
+            target.column,
+            target.endLine,
+            target.endColumn,
+          ),
+          originSelectionRange: referenceRange(model, position),
+        });
+      }
+      this.notice(
+        [
+          matches.length
+            ? "Declarações candidatas por sintaxe; tipos, aliases e sobrecargas não são resolvidos."
+            : "Nenhuma declaração encontrada no índice sintático local.",
+          ...result.warnings,
+        ].join(" "),
+      );
+      return matches;
+    } catch (e) {
+      if (!this.disposed)
+        this.notice(`Não foi possível localizar a definição: ${String(e)}`);
+      return [];
+    }
+  }
   async definitions(
     model: monaco.editor.ITextModel,
     position: monaco.Position,
   ) {
+    if (syntaxLanguages.includes(model.getLanguageId()))
+      return this.syntaxDefinitions(model, position);
     return this.locations(
       await this.query(model, (w) =>
         w.getDefinitionAtPosition(
@@ -363,7 +487,10 @@ export class Project {
         ),
       ),
       model.uri,
-    );
+    ).map((location): monaco.languages.LocationLink => ({
+      ...location,
+      originSelectionRange: referenceRange(model, position),
+    }));
   }
   async references(model: monaco.editor.ITextModel, position: monaco.Position) {
     return this.locations(

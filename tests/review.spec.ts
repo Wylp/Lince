@@ -288,6 +288,30 @@ test.beforeEach(async ({ page }) => {
               ]),
             ),
           };
+        if (command === "get_code_definitions") {
+          win.lastDefinition = args;
+          if (win.definitionError) throw "Falha ao ler índice local";
+          return {
+            targets: [
+              {
+                path: "python/service.py",
+                line: 1,
+                column: 5,
+                endLine: 1,
+                endColumn: 14,
+              },
+              {
+                path: "python/other.py",
+                line: 1,
+                column: 5,
+                endLine: 1,
+                endColumn: 14,
+              },
+            ],
+            warnings: ["Índice de declarações parcial: fixture"],
+            indexedFiles: 3,
+          };
+        }
         if (command === "get_repository_index")
           return {
             head: [
@@ -298,6 +322,7 @@ test.beforeEach(async ({ page }) => {
                 size: 3000,
               })),
               { path: "src/utils.ts", oid: "def", mode: "100644", size: 3000 },
+              { path: "python/caller.py", oid: "py", mode: "100644", size: 50 },
             ],
             base: files
               .filter((f) => f.status !== "added")
@@ -337,7 +362,11 @@ test.beforeEach(async ({ page }) => {
           return {
             path: args.path,
             side: args.side,
-            text: textFor(args.path),
+            text: args.path.endsWith(".py")
+              ? args.path.endsWith("caller.py")
+                ? "from service import calculate\ncalculate(2)\n"
+                : `def calculate(value):\n    return value * ${args.path.includes("other") ? 3 : 2}\n`
+              : textFor(args.path),
             reason: null,
           };
         if (command === "post_review_comment") {
@@ -377,6 +406,10 @@ async function open(page: import("@playwright/test").Page) {
     .fill("https://github.com/acme/project/pull/42");
   await page.getByRole("button", { name: "Abrir PR" }).click();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
+  await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
+  await page
+    .getByRole("button", { name: "Fixar explorador", exact: true })
+    .click();
 }
 test("preserves scroll, reviewed state and selection across files and reload", async ({
   page,
@@ -412,6 +445,7 @@ test("preserves scroll, reviewed state and selection across files and reload", a
   await expect(page.locator(".file-item.selected")).toContainText(
     "controller.ts",
   );
+  await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
   await expect(page.locator(".sidebar")).toBeInViewport();
   await expect(page.locator(".file-header")).toBeInViewport();
   await page.screenshot({
@@ -436,6 +470,7 @@ test("blocks binaries and resets progress after a new push", async ({
   });
   await page.getByRole("button", { name: "Abrir PR" }).click();
   await expect(page.getByRole("status")).toContainText("voltou/voltaram");
+  await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
   await page
     .getByRole("navigation", { name: "Arquivos alterados" })
     .getByRole("button", { name: /controller.ts/ })
@@ -878,4 +913,97 @@ test("base references stay on the base snapshot with tsconfig aliases", async ({
   await expect(
     page.getByTestId("source-editor").locator(".view-lines"),
   ).toContainText("value * 5");
+});
+
+test("compact workspace gives code the space and reveals explorer by hover or keyboard", async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole("button", { name: "Desafixar explorador" }).click();
+  await page.getByTestId("diff-editor").click({ position: { x: 500, y: 100 } });
+  const toggle = page.getByRole("button", { name: "Mostrar arquivos" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#file-explorer")).toBeHidden();
+  const before = await page.getByTestId("diff-editor").boundingBox();
+  expect(before!.width).toBeGreaterThan(1380);
+  expect(before!.height).toBeGreaterThan(620);
+  await toggle.hover();
+  await expect(
+    page.getByRole("navigation", { name: "Arquivos alterados" }),
+  ).toBeVisible();
+  expect((await page.getByTestId("diff-editor").boundingBox())!.width).toBe(
+    before!.width,
+  );
+  await page.getByTestId("diff-editor").hover({ position: { x: 500, y: 100 } });
+  await expect(page.locator("#file-explorer")).toBeHidden();
+  // Keyboard focus reveals the same panel and Escape returns to code.
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#file-explorer")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#file-explorer")).toBeHidden();
+  await page.getByLabel("Detalhes da PR").click();
+  await expect(page.locator(".pr-details-popover")).toContainText(
+    "feat/review",
+  );
+  await page.getByLabel("Detalhes da PR").click();
+  await page.screenshot({
+    path: `test-results/compact-${test.info().project.name}.png`,
+  });
+});
+
+test("underlines the full import path and opens its target", async ({
+  page,
+}) => {
+  await open(page);
+  const lines = page.locator(
+    ".monaco-diff-editor .editor.modified .view-lines",
+  );
+  const path = lines.getByText("'@/utils'", { exact: true });
+  await page.keyboard.down("Meta");
+  await path.hover();
+  await expect(lines.locator(".goto-definition-link")).toHaveText("@/utils", {
+    timeout: 15000,
+  });
+  await lines.locator(".goto-definition-link").click({ modifiers: ["Meta"] });
+  await page.keyboard.up("Meta");
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts", {
+    timeout: 15000,
+  });
+});
+
+test("previews syntax candidates outside the diff, exposes limits and stays read-only", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.press("Meta+p");
+  await page.getByLabel("Ir ao arquivo", { exact: true }).fill("python/caller");
+  await page.getByLabel("Ir ao arquivo", { exact: true }).press("Enter");
+  const call = page
+    .getByTestId("source-editor")
+    .locator(".view-lines")
+    .getByText("calculate", { exact: true })
+    .last();
+  await call.click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Declarações candidatas por sintaxe");
+  await expect(dialog.locator(".view-lines")).toContainText("value * 2");
+  await page.getByRole("button", { name: "python/other.py:1" }).click();
+  await expect(dialog.locator(".view-lines")).toContainText("value * 3");
+  await dialog.locator("textarea").press("End");
+  await page.keyboard.type("DO_NOT_EDIT");
+  await expect(dialog.locator(".view-lines")).not.toContainText("DO_NOT_EDIT");
+  await page.getByRole("button", { name: "Fechar prévia" }).click();
+  await expect(
+    page.getByRole("button", { name: "Referências", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".code-workspace")).toContainText(
+    "Índice de declarações parcial",
+  );
+  expect(await page.evaluate(() => (window as any).lastDefinition.side)).toBe(
+    "head",
+  );
 });

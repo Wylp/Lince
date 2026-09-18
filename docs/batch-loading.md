@@ -24,3 +24,5 @@ Um snapshot completo fica em memória no backend. Abrir outro com sucesso substi
 - Índice JS/TS/JSON de até 2.000 documentos / 16 MiB. Excedentes continuam no explorador, com aviso de resolução parcial.
 
 Exceder limites de um arquivo bloqueia sua revisão; exceder os limites globais impede abrir um snapshot parcial silenciosamente. Esses limites de memória não limitam o tamanho do download Git ou do cache em disco. Veja [cache, editor e limitações](code-workspace.md).
+
+Previews de Python, Java, C#, Go, Rust, C, C++ e PHP preparam um índice sintático sob demanda, com um lote local por linguagem/lado. Não ampliam o lote inicial de abertura nem fazem consultas HTTP por arquivo. Limites próprios e a diferença em relação à navegação semântica JS/TS estão em [code-workspace.md](code-workspace.md).

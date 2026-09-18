@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { monaco, Project, language } from "./editor";
+import {
+  monaco,
+  Project,
+  language,
+  semanticLanguage,
+  syntaxLanguages,
+} from "./editor";
 import type { Document, Location, RepoIndex, Side } from "./editor";
 import { CodeEditor } from "./CodeEditor";
 import type { EditorHandle } from "./CodeEditor";
@@ -35,6 +41,11 @@ export default function CodeWorkspace({
   saveScroll: (path: string, top: number, left: number) => void;
   loading: boolean;
 }) {
+  const [pinned, setPinned] = useState(false),
+    [hovered, setHovered] = useState(false),
+    [keyboardTree, setKeyboardTree] = useState(false),
+    [treeOpen, setTreeOpen] = useState(false);
+  const explorerOpen = pinned || hovered || keyboardTree || treeOpen;
   const [bundle, setBundle] = useState<Bundle | null>(null),
     [project, setProject] = useState<Project | null>(null),
     [error, setError] = useState(""),
@@ -103,7 +114,9 @@ export default function CodeWorkspace({
     ])
       .then(async ([bundle, index]) => {
         if (stale) return;
-        instance = new Project(snapshot.id, index);
+        instance = new Project(snapshot.id, index, (message) => {
+          if (!stale) setMessage(message);
+        });
         await instance.initialize();
         if (stale) {
           instance.dispose();
@@ -222,10 +235,11 @@ export default function CodeWorkspace({
       if (matches.length) {
         setPeek(matches);
         setPeekIndex(0);
-      } else
+      } else if (semanticLanguage(editor.getModel()!.getLanguageId())) {
         setMessage(
           "Definição não encontrada no código indexado. Dependências externas não são instaladas.",
         );
+      }
     } catch (e) {
       setMessage(String(e));
     }
@@ -299,87 +313,156 @@ export default function CodeWorkspace({
     );
   return (
     <div className="workspace code-workspace" inert={loading}>
-      <aside className="sidebar">
-        <div className="explorer-tabs">
+      <div
+        className={`explorer-dock ${pinned ? "pinned" : ""} ${explorerOpen ? "expanded" : ""}`}
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => {
+          setHovered(false);
+          setTreeOpen(false);
+        }}
+        onFocusCapture={(e) => {
+          if (e.target.matches(":focus-visible")) setKeyboardTree(true);
+        }}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+            setKeyboardTree(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && !pinned) {
+            setHovered(false);
+            setTreeOpen(false);
+            setKeyboardTree(false);
+            handle.current?.editor.focus();
+          }
+        }}
+      >
+        <div className="explorer-rail">
           <button
-            className={tree === "changes" ? "active" : ""}
-            onClick={() => setTree("changes")}
+            aria-label="Mostrar arquivos"
+            aria-expanded={explorerOpen}
+            aria-controls="file-explorer"
+            title="Arquivos · passe o mouse ou use Cmd/Ctrl+P"
+            onClick={() => setTreeOpen((v) => !v)}
           >
-            Alterações <small>{snapshot.files.length}</small>
+            ▱
           </button>
+          <small title="Arquivos pendentes">
+            {
+              snapshot.files.filter((f) => !review.files[f.path]?.reviewed)
+                .length
+            }
+          </small>
           <button
-            className={tree === "repo" ? "active" : ""}
-            onClick={() => setTree("repo")}
-          >
-            Explorador
-          </button>
-        </div>
-        <label className="search">
-          <span>⌕</span>
-          <input
-            aria-label="Filtrar arquivos"
-            placeholder="Encontrar arquivo…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </label>
-        {tree === "changes" ? (
-          <label className="pending-filter">
-            <input
-              type="checkbox"
-              checked={pending}
-              onChange={(e) => setPending(e.target.checked)}
-            />{" "}
-            Apenas pendentes
-          </label>
-        ) : (
-          <div className="explorer-tabs">
-            <button
-              className={side === "head" ? "active" : ""}
-              onClick={() => setSide("head")}
-            >
-              Head
-            </button>
-            <button
-              className={side === "base" ? "active" : ""}
-              onClick={() => setSide("base")}
-            >
-              Base comum
-            </button>
-          </div>
-        )}
-        <div className="tree-scroll">
-          {tree === "changes" ? (
-            <FileTree
-              files={changedPaths}
-              progress={{
-                ...review,
-                selected: tab.mode === "diff" ? tab.path : "",
-              }}
-              select={(path) => navigate({ path, side: "head", mode: "diff" })}
-            />
-          ) : (
-            <RepositoryTree
-              paths={repoPaths}
-              selected={tab.path}
-              changed={changed}
-              open={(path) => navigate({ path, side, mode: "code" })}
-            />
-          )}
-        </div>
-        <div className="sidebar-footer">
-          <span>Somente leitura</span>
-          <button
+            aria-label="Buscar arquivo"
+            title="Buscar arquivo (Cmd/Ctrl+P)"
             onClick={() => {
               setQuickQuery("");
               setQuick(true);
             }}
-            title="Cmd/Ctrl+P"
           >
-            ⌕ Ir ao arquivo
+            ⌕
           </button>
         </div>
-      </aside>
+        <aside
+          className="sidebar"
+          id="file-explorer"
+          inert={!explorerOpen}
+          aria-hidden={!explorerOpen}
+        >
+          <div className="explorer-heading">
+            <strong>Arquivos</strong>
+            <button
+              aria-label={pinned ? "Desafixar explorador" : "Fixar explorador"}
+              aria-pressed={pinned}
+              onClick={() => setPinned((v) => !v)}
+              title={pinned ? "Recolher quando sair" : "Manter aberto"}
+            >
+              {pinned ? "◀" : "⊙"}
+            </button>
+          </div>
+          <div className="explorer-tabs">
+            <button
+              className={tree === "changes" ? "active" : ""}
+              onClick={() => setTree("changes")}
+            >
+              Alterações <small>{snapshot.files.length}</small>
+            </button>
+            <button
+              className={tree === "repo" ? "active" : ""}
+              onClick={() => setTree("repo")}
+            >
+              Explorador
+            </button>
+          </div>
+          <label className="search">
+            <span>⌕</span>
+            <input
+              aria-label="Filtrar arquivos"
+              placeholder="Encontrar arquivo…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </label>
+          {tree === "changes" ? (
+            <label className="pending-filter">
+              <input
+                type="checkbox"
+                checked={pending}
+                onChange={(e) => setPending(e.target.checked)}
+              />{" "}
+              Apenas pendentes
+            </label>
+          ) : (
+            <div className="explorer-tabs">
+              <button
+                className={side === "head" ? "active" : ""}
+                onClick={() => setSide("head")}
+              >
+                Head
+              </button>
+              <button
+                className={side === "base" ? "active" : ""}
+                onClick={() => setSide("base")}
+              >
+                Base comum
+              </button>
+            </div>
+          )}
+          <div className="tree-scroll">
+            {tree === "changes" ? (
+              <FileTree
+                files={changedPaths}
+                progress={{
+                  ...review,
+                  selected: tab.mode === "diff" ? tab.path : "",
+                }}
+                select={(path) =>
+                  navigate({ path, side: "head", mode: "diff" })
+                }
+              />
+            ) : (
+              <RepositoryTree
+                paths={repoPaths}
+                selected={tab.path}
+                changed={changed}
+                open={(path) => navigate({ path, side, mode: "code" })}
+              />
+            )}
+          </div>
+          <div className="sidebar-footer">
+            <span>Somente leitura</span>
+            <button
+              onClick={() => {
+                setQuickQuery("");
+                setQuick(true);
+              }}
+              title="Cmd/Ctrl+P"
+            >
+              ⌕ Ir ao arquivo
+            </button>
+          </div>
+        </aside>
+      </div>
       <main className="reader">
         <div
           className="editor-tabs"
@@ -423,7 +506,7 @@ export default function CodeWorkspace({
         </div>
         <div className="file-header">
           <div className="file-heading">
-            <strong>{tab.path}</strong>
+            <strong title={tab.path}>{tab.path}</strong>
             <small>
               {tab.mode === "diff"
                 ? "Diff acumulado"
@@ -518,6 +601,8 @@ export default function CodeWorkspace({
             Comentar linha
           </button>
           <button
+            disabled={!semanticLanguage(language(tab.path))}
+            title="Referências semânticas disponíveis em JavaScript e TypeScript"
             onClick={() => {
               void handle.current?.editor
                 .getAction("editor.action.referenceSearch.trigger")
@@ -588,7 +673,9 @@ export default function CodeWorkspace({
             {language(tab.path)} ·{" "}
             {["typescript", "javascript"].includes(language(tab.path))
               ? "Cmd/Ctrl+clique para seguir definições"
-              : "Destaque de sintaxe · navegação semântica disponível em JS/TS"}
+              : syntaxLanguages.includes(language(tab.path))
+                ? "Cmd/Ctrl+clique · declarações candidatas por sintaxe"
+                : "Destaque de sintaxe"}
           </span>
           <span>Somente leitura</span>
         </footer>
@@ -610,6 +697,12 @@ export default function CodeWorkspace({
               ×
             </button>
           </header>
+          {!semanticLanguage(peekModel.getLanguageId()) && (
+            <p className="metadata-note">
+              Declarações candidatas por sintaxe. Confira o contexto; tipos e
+              sobrecargas não são resolvidos.
+            </p>
+          )}
           {peek.length > 1 && (
             <div className="peek-targets">
               {peek.map((p, i) => (

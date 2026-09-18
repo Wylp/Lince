@@ -1,5 +1,15 @@
 # Validação
 
+## Previews em dez linguagens e layout compacto — 18/09/2026
+
+- Build de produção e 9 testes unitários frontend passaram com Node 24 LTS.
+- **34 cenários Playwright passaram no build de produção**, em Chromium e WebKit. Novos cenários verificam: caminho completo do import sublinhado e clicável; explorador recolhido/hover/teclado/fixação; ganho de espaço sem redimensionar o diff no hover; candidatos de definição Python, ambiguidade, índice parcial e preview somente leitura.
+- **22 testes Rust passaram**, com 2 de rede ignorados por padrão. Os novos testes executam as oito gramáticas reais: funções e tipos em outro arquivo, posições Unicode/UTF-16, nomes duplicados, exclusão de comentários/strings e posições inválidas. A fixture Git testa leitura em lote e isolamento das declarações entre base e head.
+- Build Tauri macOS arm64 `--debug --no-bundle` passou com as oito gramáticas incorporadas. Clippy com `-D warnings` e formatação passaram. O teste de UI usa IPC simulado; testes Rust usam os parsers e Git reais em arquivos temporários. Não foram baixadas PRs reais ou publicados comentários nesta atualização.
+- Screenshot de 1440×940 inspecionado: editor com aproximadamente 1.400×675 px e árvore numa faixa de 40 px. O teste exige largura acima de 1.380 px e altura acima de 620 px; hover do painel mantém a largura do editor.
+- JS/TS mantém resolução semântica. Nas oito linguagens adicionais a cobertura é de **declarações candidatas por sintaxe**, sem resolução de aliases, tipos ou sobrecargas. A interface informa essa diferença; veja [limites dos previews](code-workspace.md).
+- Compilação/execução nativa Windows/Linux e desempenho em grandes monorepos continuam sem validação local.
+
 ## Workspace de código — 18/09/2026
 
 - Node 24 LTS: build de produção, 9 testes unitários e Prettier passaram. Auditoria npm: zero vulnerabilidades após atualização do Monaco e override de DOMPurify.
