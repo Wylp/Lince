@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 pub(crate) const MAX_FILE: u64 = 1_048_576;
 const MAX_LINES: usize = 12_000;
@@ -79,7 +82,7 @@ pub fn parse_url(input: &str) -> Result<(String, u64), String> {
     Ok((format!("{}/{}", parts[1], parts[2]), number))
 }
 
-fn gh_executable() -> PathBuf {
+pub(crate) fn gh_executable() -> PathBuf {
     if let Some(path) = std::env::var_os("LINCE_GH") {
         return path.into();
     }
@@ -112,14 +115,7 @@ fn gh_executable() -> PathBuf {
 pub async fn api(endpoint: &str) -> Result<Value, String> {
     request(endpoint, None).await
 }
-pub async fn graphql(query: String) -> Result<Value, String> {
-    let result = request("graphql", Some(query)).await?;
-    if result.get("errors").is_some() {
-        return Err("Consulta GraphQL incompleta ou recusada pelo GitHub. Tente novamente.".into());
-    }
-    Ok(result)
-}
-async fn request(endpoint: &str, query: Option<String>) -> Result<Value, String> {
+async fn request(endpoint: &str, body: Option<Value>) -> Result<Value, String> {
     let mut command = Command::new(gh_executable());
     command
         .args([
@@ -127,17 +123,17 @@ async fn request(endpoint: &str, query: Option<String>) -> Result<Value, String>
             "--hostname",
             "github.com",
             "--method",
-            if query.is_some() { "POST" } else { "GET" },
+            if body.is_some() { "POST" } else { "GET" },
             endpoint,
         ])
         .env("GH_PROMPT_DISABLED", "1")
         .env("GH_PAGER", "cat")
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    if let Some(query) = query {
-        command.args(["-f", &format!("query={query}")]);
+    if body.is_some() {
+        command.args(["--input", "-"]);
     }
     #[cfg(windows)]
     command.creation_flags(0x08000000);
@@ -148,6 +144,7 @@ async fn request(endpoint: &str, query: Option<String>) -> Result<Value, String>
             format!("Não foi possível executar gh: {e}.")
         }
     })?;
+    let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let result = tokio::time::timeout(Duration::from_secs(60), async {
@@ -159,7 +156,15 @@ async fn request(endpoint: &str, query: Option<String>) -> Result<Value, String>
                 .await
                 .map(|_| bytes)
         };
-        let (out, err) = tokio::try_join!(
+        let write = async {
+            if let Some(body) = body {
+                stdin.write_all(&serde_json::to_vec(&body)?).await?;
+            }
+            drop(stdin);
+            Ok::<(), std::io::Error>(())
+        };
+        let ((), out, err) = tokio::try_join!(
+            write,
             read(Box::new(stdout), 32 * 1024 * 1024),
             read(Box::new(stderr), 65536)
         )?;
@@ -329,7 +334,10 @@ mod tests {
             .unwrap_or_else(|_| "https://github.com/cli/cli/pull/14462".into());
         let snapshot = open(&url).await.unwrap();
         assert!(!snapshot.files.is_empty());
-        let loaded = crate::batch::load(snapshot.clone()).await.unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let (loaded, _) = crate::repository::prepare(snapshot.clone(), cache.path())
+            .await
+            .unwrap();
         let mut displayed = 0;
         for file in snapshot.files.iter().take(5) {
             let result = &loaded.files[&file.path].diff;
@@ -458,4 +466,23 @@ mod auth_tests {
         );
         assert_eq!(auth_result(Ok(serde_json::json!({}))).state, "unavailable");
     }
+}
+
+pub async fn publish_comment(
+    snapshot: &Snapshot,
+    path: &str,
+    side: &str,
+    line: u32,
+    body: &str,
+) -> Result<String, String> {
+    let current = api(&format!(
+        "repos/{}/pulls/{}",
+        snapshot.repo, snapshot.number
+    ))
+    .await?;
+    if current["head"]["sha"] != snapshot.head_sha || current["base"]["sha"] != snapshot.base_sha {
+        return Err("A PR mudou. Atualize a revisão antes de publicar o comentário.".into());
+    }
+    let result=request(&format!("repos/{}/pulls/{}/comments",snapshot.repo,snapshot.number),Some(serde_json::json!({"commit_id":snapshot.head_sha,"path":path,"side":side,"line":line,"body":body}))).await?;
+    string(&result, "html_url")
 }

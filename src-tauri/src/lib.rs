@@ -2,6 +2,7 @@ mod batch;
 mod discovery;
 mod github;
 mod progress;
+mod repository;
 mod watches;
 use github::{FileDiff, Snapshot};
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use tokio::sync::Mutex;
 
 struct Backend {
     bundles: Mutex<HashMap<String, std::sync::Arc<batch::LoadedPr>>>,
+    repository: Mutex<Option<std::sync::Arc<repository::Repository>>>,
     loading: Mutex<()>,
     disk: Mutex<()>,
     monitor: Mutex<()>,
@@ -19,6 +21,7 @@ impl Default for Backend {
     fn default() -> Self {
         Self {
             bundles: Mutex::new(HashMap::new()),
+            repository: Mutex::new(None),
             loading: Mutex::new(()),
             disk: Mutex::new(()),
             monitor: Mutex::new(()),
@@ -27,14 +30,24 @@ impl Default for Backend {
     }
 }
 #[tauri::command]
-async fn open_pr(url: String, state: State<'_, Backend>) -> Result<Snapshot, String> {
+async fn open_pr(
+    app: tauri::AppHandle,
+    url: String,
+    state: State<'_, Backend>,
+) -> Result<Snapshot, String> {
     let _loading = state.loading.lock().await;
     let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
     let snapshot = github::open(&url).await?;
     if state.bundles.lock().await.contains_key(&snapshot.id) {
         return Ok(snapshot);
     }
-    let bundle = batch::load(snapshot.clone()).await?;
+    let root = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("repositories");
+    let (bundle, repository) = repository::prepare(snapshot.clone(), &root).await?;
+    *state.repository.lock().await = Some(std::sync::Arc::new(repository));
     let mut cache = state.bundles.lock().await;
     cache.clear();
     cache.insert(snapshot.id.clone(), std::sync::Arc::new(bundle));
@@ -268,6 +281,9 @@ pub fn run() {
             open_pr,
             get_diff,
             get_pr_files,
+            get_repository_index,
+            read_repository_file,
+            post_review_comment,
             load_progress,
             save_progress
         ])
@@ -286,4 +302,131 @@ async fn set_watch(app: tauri::AppHandle, repo: String, enabled: bool) -> Result
 #[tauri::command]
 async fn poll_watches(app: tauri::AppHandle) -> Result<watches::PollStatus, String> {
     watches::poll(&app).await
+}
+
+#[tauri::command]
+async fn get_repository_index(
+    snapshot_id: String,
+    state: State<'_, Backend>,
+) -> Result<serde_json::Value, String> {
+    let _loading = state.loading.lock().await;
+    if !state.bundles.lock().await.contains_key(&snapshot_id) {
+        return Err("Revisão expirada".into());
+    }
+    let repo = state
+        .repository
+        .lock()
+        .await
+        .clone()
+        .ok_or("Repositório ainda não carregado")?;
+    serde_json::to_value(&repo.index).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn read_repository_file(
+    snapshot_id: String,
+    side: String,
+    path: String,
+    state: State<'_, Backend>,
+) -> Result<repository::Document, String> {
+    let repo = {
+        let _loading = state.loading.lock().await;
+        if !state.bundles.lock().await.contains_key(&snapshot_id) {
+            return Err("Revisão expirada".into());
+        }
+        state
+            .repository
+            .lock()
+            .await
+            .clone()
+            .ok_or("Repositório ainda não carregado")?
+    };
+    repository::read(&repo, &side, &path).await
+}
+
+#[tauri::command]
+async fn post_review_comment(
+    snapshot_id: String,
+    path: String,
+    side: String,
+    line: u32,
+    body: String,
+    state: State<'_, Backend>,
+) -> Result<String, String> {
+    if body.trim().is_empty() || body.len() > 65536 || !matches!(side.as_str(), "LEFT" | "RIGHT") {
+        return Err("Comentário inválido.".into());
+    }
+    let bundle = state
+        .bundles
+        .lock()
+        .await
+        .get(&snapshot_id)
+        .cloned()
+        .ok_or("Revisão expirada")?;
+    let file = bundle
+        .files
+        .get(&path)
+        .ok_or("Comentários de revisão precisam de um arquivo alterado")?;
+    if !file.diff.reviewable || !comment_line(file.diff.patch.as_deref().unwrap_or(""), &side, line)
+    {
+        return Err("Esta linha está fora dos hunks do diff. Selecione uma linha alterada ou de contexto próxima à alteração.".into());
+    }
+    let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
+    github::publish_comment(&bundle.snapshot, &path, &side, line, &body).await
+}
+fn comment_line(patch: &str, side: &str, target: u32) -> bool {
+    let (mut old, mut new) = (0, 0);
+    let mut hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("@@ ") {
+            let parts = line.split_whitespace().collect::<Vec<_>>();
+            old = parts
+                .get(1)
+                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            new = parts
+                .get(2)
+                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            hunk = true;
+            continue;
+        }
+        if !hunk {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b' ') => {
+                if (side == "LEFT" && old == target) || (side == "RIGHT" && new == target) {
+                    return target > 0;
+                }
+                old += 1;
+                new += 1;
+            }
+            Some(b'-') => {
+                if side == "LEFT" && old == target {
+                    return target > 0;
+                }
+                old += 1;
+            }
+            Some(b'+') => {
+                if side == "RIGHT" && new == target {
+                    return target > 0;
+                }
+                new += 1;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+#[cfg(test)]
+mod comment_tests {
+    use super::*;
+    #[test]
+    fn validates_line_and_side_inside_hunks() {
+        let patch = "@@ -4,2 +4,2 @@\n-old\n+new\n context\n";
+        assert!(comment_line(patch, "LEFT", 4));
+        assert!(comment_line(patch, "RIGHT", 5));
+        assert!(!comment_line(patch, "RIGHT", 3));
+        assert!(!comment_line(patch, "LEFT", 6));
+    }
 }

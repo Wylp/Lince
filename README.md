@@ -8,7 +8,7 @@ Lince é um aplicativo desktop open source para revisar pull requests do GitHub 
 
 Primeira versão funcional implementada com Tauri 2, React, TypeScript, Vite e Rust. Abre PRs do GitHub.com com a autenticação existente do `gh`, mostra árvore de arquivos e diff acumulado lado a lado, preserva a posição por arquivo e salva o progresso localmente.
 
-A stack usa **Node 24 LTS** (`.nvmrc`, `mise.toml` e `engines`). Código e lockfiles estão nesta pasta; nenhum repositório remoto foi criado. Licença ainda a definir antes da publicação.
+A stack usa **Node 24 LTS** (`.nvmrc`, `mise.toml` e `engines`). Repositório: [Wylp/Lince](https://github.com/Wylp/Lince). Licença ainda a definir.
 
 ## Executar
 
@@ -21,7 +21,7 @@ gh auth status
 npm run tauri dev
 ```
 
-Cole uma URL `https://github.com/owner/repo/pull/123`. Selecione arquivos na árvore, use Anterior/Próximo e marque Revisado. O app reabre a última PR e restaura seleção, posição e progresso. Abrir novamente a URL atual atualiza o snapshot. Um novo push invalida o progresso de forma conservadora; veja [decisões técnicas](docs/architecture.md).
+Cole uma URL `https://github.com/owner/repo/pull/123`. Selecione arquivos na árvore e marque Revisado. O app reabre a última PR e restaura seleção, posição e progresso. Abrir novamente a URL atual atualiza o snapshot. Um novo push invalida o progresso de forma conservadora; veja [decisões técnicas](docs/architecture.md).
 
 `npm run dev` abre somente o frontend para desenvolvimento: a integração com `gh` depende do aplicativo desktop. Não há modo de demonstração ativado em produção.
 
@@ -32,6 +32,12 @@ Pré-requisitos por plataforma:
 - **Linux (Debian/Ubuntu):** `build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`, além de Rust e `gh`.
 
 Consulte a [lista oficial do Tauri](https://tauri.app/start/prerequisites/) para sua distribuição. Caso o app não encontre `gh`, defina `LINCE_GH` com o caminho absoluto do executável. Não é preciso clonar o repositório da PR.
+
+## Navegar no código
+
+O workspace usa Monaco, com código **somente leitura**, diff lado a lado, abas e explorador de todos os arquivos. Cmd/Ctrl+P abre arquivos; Cmd/Ctrl+click ou F12 navega para definições JS/TS, inclusive fora do diff; Alt+F12 mostra um preview. Comentários de linha têm formulário separado e envio explícito ao GitHub.
+
+O Lince mantém um cache Git próprio dos commits, sem alterar seu checkout. **Atualizar PR** busca novos commits. Código permanece nesse cache em disco; progresso continua no SQLite. [Atalhos, cache e limites por linguagem](docs/code-workspace.md).
 
 ## Listar PRs e configurar monorepos
 
@@ -51,7 +57,7 @@ npm run test:e2e
 npm run tauri build -- --debug --no-bundle
 ```
 
-O binário de desenvolvimento é gerado em `src-tauri/target/debug/` (`lince` ou `lince.exe`). Build de release: `npm run tauri build -- --no-bundle`. Instaladores, assinatura e publicação estão desativados.
+O binário de desenvolvimento é gerado em `src-tauri/target/debug/` (`lince` ou `lince.exe`). Build de release: `npm run tauri build -- --no-bundle`. Instaladores e updater são preparados pelo workflow de release; veja [publicação](docs/updates.md).
 
 Teste opcional de integração real, somente leitura, requer `gh` autenticado e rede:
 
@@ -59,7 +65,7 @@ Teste opcional de integração real, somente leitura, requer `gh` autenticado e 
 cargo test --manifest-path src-tauri/Cargo.toml live_public_pr -- --ignored --nocapture
 ```
 
-`LINCE_TEST_PR` permite escolher outra URL para esse teste. Veja [validação e limitações](docs/validation.md). Há CI configurada para compilar/testar em Linux, Windows e macOS; ela ainda precisa ser executada num repositório remoto.
+`LINCE_TEST_PR` permite escolher outra URL para esse teste. Veja [validação e limitações](docs/validation.md). Há CI configurada para compilar/testar em Linux, Windows e macOS; a validação nativa local desta entrega foi feita no macOS.
 
 ## Limites desta entrega
 
@@ -147,7 +153,7 @@ O diff principal deve representar as alterações da PR em relação à base com
 
 Fixar os SHAs da revisão carregada evita misturar conteúdo de momentos diferentes quando há um novo push. Considerar arquivos adicionados, removidos, renomeados, binários e arquivos sem newline final.
 
-A primeira versão adotou `react-diff-view`, após avaliação de patches e navegação em Chromium/WebKit. Detalhes e limites da avaliação estão em [architecture.md](docs/architecture.md). Destaque de sintaxe e validação das três WebViews nativas continuam pendentes.
+A primeira versão adotou `react-diff-view`, após avaliação de patches e navegação em Chromium/WebKit. Detalhes e limites da avaliação estão em [architecture.md](docs/architecture.md). A implementação atual migrou para Monaco com destaque e navegação; veja [workspace](docs/code-workspace.md). Validação nativa Windows/Linux continua pendente.
 
 ### Estado local
 

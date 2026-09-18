@@ -1,29 +1,23 @@
 # Decisões da primeira implementação
 
-## Biblioteca de diff
+## Editor e fonte de verdade
 
-Foi avaliada e adotada **react-diff-view 3** ([documentação e código](https://github.com/otakustay/react-diff-view)). Ela consome patches unificados, oferece visão split, gutters e identificadores de linhas, decorações por hunk e extensões para comentários e tokens. Há testes locais com inclusão, remoção, modificação/renomeação e ausência de newline final. Os testes de navegação rodam em Chromium e WebKit.
+A renderização atual usa Monaco Editor, com diff e código somente leitura, sintaxe, abas, explorador do repositório e navegação semântica JS/TS. A avaliação anterior de `react-diff-view` foi preservada nos testes de desenvolvimento. Veja [workspace de código](code-workspace.md) para a decisão, atalhos e limitações.
 
-Não foi criado um renderizador de linhas próprio. O Rust usa `similar` para calcular um patch completo; o React delega o parsing e as linhas à biblioteca. Cabeçalhos internos usam nomes sintéticos; os caminhos reais e renomeações aparecem no cabeçalho fixo. Isso evita ambiguidade com espaços, tabs e caracteres especiais em nomes Git. Mudanças de modo Git e ausência de newline final são mostradas explicitamente.
+1. Rust valida uma URL HTTPS em github.com, consulta metadados e fixa `base.sha` e `head.sha`.
+2. Compare obtém a base comum. O diff acumulado é **merge-base → head**.
+3. `/pulls/N/files` é paginado em lotes de 100 e conferido com `changed_files`. PRs com mais de 3.000 arquivos são recusadas.
+4. Metadados são relidos após a paginação; alteração de SHAs ou quantidade exige nova abertura.
+5. Um cache Git bare próprio busca commits ausentes, sem checkout. Árvores e blobs locais são lidos por SHA, com conteúdo deduplicado em lote. Renomeações usam o caminho anterior na base.
+6. **Patches da API são ignorados**: o Rust calcula patches completos sobre os blobs. A integridade e os limites são verificados antes de liberar o snapshot.
 
-Limites da avaliação: sem virtualização, syntax highlighting ainda desligado, sem testes com leitor de tela ou WebViews nativas de Linux/Windows. Tabelas, botões, inputs, labels, foco visível e navegação por Tab funcionam nos testes dos browsers. Uma única árvore de diretórios com `details/summary` evita simular parcialmente o complexo padrão ARIA tree. Se a demanda superar os limites de renderização, avaliar virtualização antes de ampliá-los.
+A autenticação permanece com o gh. A WebView recebe apenas comandos IPC específicos, sem acesso genérico a shell ou filesystem. Workers do editor são assets locais. Nenhum código do repositório é executado. A única escrita remota deste fluxo é o comentário explicitamente publicado pelo usuário; o backend valida linha, lado e SHAs antes do envio.
 
-## Fonte de verdade e integridade
-
-1. Rust valida uma URL HTTPS em github.com, consulta metadados da PR e fixa `base.sha` e `head.sha`.
-2. A API Compare obtém a base comum desses SHAs. O diff é **merge-base → head**, incluindo todas as mudanças acumuladas da PR.
-3. `/pulls/N/files` é paginado em lotes de 100. A API limita a listagem a 3.000 arquivos: PRs maiores são recusadas explicitamente. A quantidade é conferida com `changed_files`.
-4. Metadados são relidos após a paginação. Se base/head ou quantidade não batem, a operação falha e pede nova abertura. A listagem da PR não tem parâmetro SHA; essa verificação detecta mudanças durante a coleta.
-5. As duas árvores Git recursivas fixam modos, tamanhos e SHAs; blobs dos arquivos alterados são buscados em lotes GraphQL e deduplicados. Todo o snapshot é preparado antes da revisão. Renomeações usam o caminho anterior. Veja [carregamento em lote](batch-loading.md).
-6. **Patches da API são ignorados**, não usados como fallback: podem estar ausentes ou truncados. Se uma árvore estiver truncada, o lote não é aberto. Falhas de consulta são exibidas e permitem retry.
-
-Não há `git checkout`, `git fetch`, escrita no repositório nem download de repositório. O processo `gh api --hostname github.com` (GET REST / POST GraphQL somente com queries de leitura) recebe argumentos separados, sem shell. Tokens permanecem com o `gh`; o frontend recebe apenas dados de revisão. São permitidos somente comandos próprios via IPC, sem shell ou filesystem genéricos na WebView. CSP bloqueia scripts remotos.
-
-Referências: [GitHub Pull Requests REST](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files), [Compare](https://docs.github.com/en/rest/commits/commits#compare-two-commits), [Git Trees](https://docs.github.com/en/rest/git/trees), [Git blobs](https://docs.github.com/en/rest/git/blobs).
+Veja [carregamento em lote](batch-loading.md) e [comentários e cache](code-workspace.md).
 
 ## Progresso
 
-`lince.sqlite3` no `app_data_dir()` do Tauri, schema SQLite versionado com `PRAGMA user_version`. Guarda URL recente, seleção e, por repo/PR/arquivo: versão, revisado, scroll vertical e horizontal. Nada é enviado ao GitHub.
+`lince.sqlite3` no `app_data_dir()` do Tauri, schema SQLite versionado com `PRAGMA user_version`. Guarda URL recente, seleção e, por repo/PR/arquivo: versão, revisado, scroll vertical e horizontal. O progresso não é enviado ao GitHub. Comentários publicados são uma operação separada.
 
 A versão inclui base comum, **head SHA**, blob SHA, status e caminhos. A invalidação inicial é conservadora: qualquer novo head invalida todas as marcações e posições da PR, inclusive arquivos inalterados. Isso impede manter uma marcação diante de mudanças apenas de permissão. Preservar arquivos idênticos entre pushes exige comparar os dois lados e modos; fica como refinamento.
 
@@ -39,15 +33,9 @@ O banco protege a integridade de escritores concorrentes, mas duas instâncias r
 
 ## Desempenho e limites explícitos
 
-- Só o diff selecionado é montado; árvore e diff têm scroll separado.
-- Até três consultas de arquivos concorrentes. Respostas antigas nunca substituem a seleção atual.
-- Cache em memória: 20 diffs no frontend e um snapshot completo no Rust (32 MiB de blobs únicos e 32 MiB de patches). Nenhum conteúdo de código é persistido pelo Lince.
-- Cada execução `gh` tem timeout de 60 s e limite de saída de 32 MiB; geração do diff tem deadline de 3 s (`similar` pode usar uma solução menos mínima, mas completa).
-- Conteúdo máximo: 1 MiB por lado, 12.000 linhas por arquivo, 4.000 bytes por linha, 16.000 linhas no patch gerado. Exceder qualquer limite bloqueia a revisão daquele arquivo; não mostramos um fragmento como se fosse completo.
-- Binários com NUL, conteúdo não UTF-8, Git LFS, links simbólicos, submódulos e modos/status desconhecidos ficam explicitamente indisponíveis. Não inferimos que ausência de patch significa arquivo vazio.
-- Arquivos vazios e renomeações sem alteração textual podem ser revisados após os conteúdos e modos serem consultados.
-- Sem expansão de contexto, diff de imagens ou navegação por abas nesta entrega.
-- Conteúdo privado funciona com as permissões da conta `gh`; expiração de token, rate limit, SSO e falta de acesso aparecem como erros de consulta.
+Só o editor ativo é montado; modelos de código e índice permanecem em memória. Os limites de arquivos, memória, índice e subprocessos estão em [batch-loading.md](batch-loading.md). Código também é mantido no cache Git em disco, separado do SQLite, sem política automática de remoção nesta versão.
+
+Conteúdo privado usa as permissões do gh. Expiração, rate limit, SSO e falta de acesso aparecem como erros. Arquivos binários, LFS, links, submódulos e conteúdo acima dos limites não podem ser marcados como revisados. Arquivos vazios e renomeações sem alteração textual podem ser revisados após consulta dos objetos e modos.
 
 ## Descoberta de gh
 

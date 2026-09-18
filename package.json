@@ -18,8 +18,9 @@
     "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.11.0",
+    "jsonc-parser": "^3.3.1",
+    "monaco-editor": "^0.56.0",
     "react": "^19.0.0",
-    "react-diff-view": "^3.3.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
@@ -29,11 +30,15 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.5.0",
     "prettier": "^3.9.7",
+    "react-diff-view": "^3.3.3",
     "typescript": "~5.8.3",
     "vite": "^6.3.0",
     "vitest": "^4.1.11"
   },
   "engines": {
     "node": "24.x"
+  },
+  "overrides": {
+    "dompurify": "^3.4.15"
   }
 }

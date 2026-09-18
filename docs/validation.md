@@ -1,4 +1,19 @@
-# Validação da primeira versão — 16/09/2026
+# Validação
+
+## Workspace de código — 18/09/2026
+
+- Node 24 LTS: build de produção, 9 testes unitários e Prettier passaram. Auditoria npm: zero vulnerabilidades após atualização do Monaco e override de DOMPurify.
+- Rust: 19 testes passaram; 2 testes de rede ignorados por padrão. Clippy com `-D warnings` passou.
+- Build Tauri `--debug --no-bundle` compilou o binário macOS arm64 com assets locais do editor e workers.
+- Chromium/WebKit: 28 cenários passaram em desenvolvimento. No build de produção, 27 passaram na execução completa; o cenário restante exigiu restringir um seletor de alerta, pois Monaco cria regiões ARIA próprias. O cenário corrigido passou em ambos os browsers.
+- Novos cenários: fonte somente leitura, definição fora do diff via Cmd+click, preview, histórico de navegação, busca rápida, aliases diretos de tsconfig e navegação isolada na base. Comentários usam IPC simulado, com envio explícito, erro de snapshot e retry; nenhum comentário foi publicado em uma PR real.
+- Teste Rust de cache local valida objetos imutáveis, leitura de arquivo não alterado, reutilização e rejeição de caminho/lado inválidos, sem worktree. Teste real somente leitura com `cli/cli#14462` validou o fetch dos commits e preparação dos dois arquivos em cache temporário.
+- Limites: não foi automatizada a interação no WebView nativo macOS; Chromium/WebKit de teste não substituem esse teste. Windows/Linux nativos, PR privada/fork privado, grandes monorepos e publicação real de comentários continuam sem validação nesta sessão. A resolução semântica cobre JS/TS com as restrições descritas em [code-workspace.md](code-workspace.md).
+- O módulo Monaco tem ~3,95 MB e o worker TS ~7,03 MB antes de gzip. Carregamento é local e separado da home; o aviso de chunk grande do Vite permanece.
+
+As seções abaixo são o histórico das validações anteriores; arquitetura e limites atuais estão em [code-workspace.md](code-workspace.md).
+
+## Primeira versão — 16/09/2026
 
 ## Ambiente
 

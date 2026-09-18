@@ -14,7 +14,7 @@ O Lince usa SQLite incorporado ao executável, via `rusqlite`/`bundled`. Não pr
 | `watched_repos` | Repos escolhidos para alertas, por conta, com último número de PR consultado |
 | `codebases` | Caminhos e nomes dos serviços de cada repo |
 
-O schema é versionado por `PRAGMA user_version` (atualmente 3). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e árvores Git permanecem em caches de memória. Filtros e estados temporários da interface também ficam em memória.
+O schema é versionado por `PRAGMA user_version` (atualmente 3). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e índices ficam em memória. Os objetos de código também persistem em um **cache Git bare separado**, em `app_cache_dir()/repositories`; não entram no SQLite. Filtros, abas de contexto e rascunhos de comentário ficam em memória. Veja [cache e retenção de código](code-workspace.md).
 
 ## Arquivo
 

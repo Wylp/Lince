@@ -254,6 +254,97 @@ test.beforeEach(async ({ page }) => {
             };
           return snapshot;
         }
+        const textFor = (path: string) =>
+          (path === "src/controller.ts"
+            ? "import { calculateTotal } from '@/utils';\nexport function controller() { return calculateTotal(2); }\n"
+            : path === "src/utils.ts"
+              ? "export function calculateTotal(value: number) {\n  return value * 10;\n}\n"
+              : "export {};\n") +
+          Array.from(
+            { length: 200 },
+            (_, i) => `const line${i} = "${path}";`,
+          ).join("\n");
+        if (command === "get_pr_files")
+          return {
+            snapshot,
+            files: Object.fromEntries(
+              files.map((f) => [
+                f.path,
+                {
+                  path: f.path,
+                  before:
+                    f.status === "added"
+                      ? ""
+                      : textFor(f.path).replace("* 10", "* 5"),
+                  after: f.path.endsWith(".png") ? null : textFor(f.path),
+                  diff: {
+                    patch: null,
+                    reason: f.path.endsWith(".png")
+                      ? "Arquivo binário; revisão textual indisponível."
+                      : null,
+                    reviewable: !f.path.endsWith(".png"),
+                  },
+                },
+              ]),
+            ),
+          };
+        if (command === "get_repository_index")
+          return {
+            head: [
+              ...files.map((f) => ({
+                path: f.path,
+                oid: "abc",
+                mode: "100644",
+                size: 3000,
+              })),
+              { path: "src/utils.ts", oid: "def", mode: "100644", size: 3000 },
+            ],
+            base: files
+              .filter((f) => f.status !== "added")
+              .map((f) => ({
+                path: f.path,
+                oid: "abc",
+                mode: "100644",
+                size: 3000,
+              })),
+            analysis: ["head", "base"].flatMap((side) =>
+              [
+                "src/controller.ts",
+                "src/utils.ts",
+                "src/service.ts",
+                "tsconfig.json",
+              ].map((path) => ({
+                side,
+                path,
+                text:
+                  path === "tsconfig.json"
+                    ? JSON.stringify({
+                        compilerOptions: {
+                          baseUrl: ".",
+                          paths: { "@/*": ["src/*"] },
+                        },
+                      })
+                    : textFor(path).replace(
+                        "* 10",
+                        side === "base" ? "* 5" : "* 10",
+                      ),
+                reason: null,
+              })),
+            ),
+            warnings: [],
+          };
+        if (command === "read_repository_file")
+          return {
+            path: args.path,
+            side: args.side,
+            text: textFor(args.path),
+            reason: null,
+          };
+        if (command === "post_review_comment") {
+          if (win.commentError) throw "A PR mudou. Atualize a revisão";
+          win.lastComment = args;
+          return "https://github.com/acme/project/pull/42#discussion_r1";
+        }
         if (command === "get_diff") {
           if (args.path.endsWith(".png"))
             return {
@@ -291,22 +382,33 @@ test("preserves scroll, reviewed state and selection across files and reload", a
   page,
 }) => {
   await open(page);
-  const pane = page.getByTestId("diff-scroll");
-  await pane.evaluate((el) => {
-    el.scrollTop = 1300;
-    el.dispatchEvent(new Event("scroll"));
-  });
+  const pane = page.locator('[data-testid="diff-editor"] .editor.modified');
+  const scrollTop = () =>
+    pane
+      .locator(".scrollbar.vertical .slider")
+      .first()
+      .evaluate((el) => (el as HTMLElement).offsetTop);
+  await pane.hover();
+  await page.mouse.wheel(0, 1300);
+  await expect.poll(scrollTop).toBeGreaterThan(0);
+  const savedTop = await scrollTop();
   await page.getByLabel("Marcar arquivo como revisado").check();
-  await page.getByRole("button", { name: /service.ts/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /service.ts/ })
+    .click();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
-  await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBe(0);
-  await page.getByRole("button", { name: /controller.ts/ }).click();
-  await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBe(1300);
+  await expect.poll(scrollTop).toBe(0);
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /controller.ts/ })
+    .click();
+  await expect.poll(scrollTop).toBe(savedTop);
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
   await expect(page.getByText("Salvo neste dispositivo")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
-  await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBe(1300);
+  await expect.poll(scrollTop).toBe(savedTop);
   await expect(page.locator(".file-item.selected")).toContainText(
     "controller.ts",
   );
@@ -321,7 +423,10 @@ test("blocks binaries and resets progress after a new push", async ({
 }) => {
   await open(page);
   await page.getByLabel("Marcar arquivo como revisado").check();
-  await page.getByRole("button", { name: /image.png/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /image.png/ })
+    .click();
   await expect(
     page.getByText("Arquivo binário; revisão textual indisponível."),
   ).toBeVisible();
@@ -331,7 +436,10 @@ test("blocks binaries and resets progress after a new push", async ({
   });
   await page.getByRole("button", { name: "Abrir PR" }).click();
   await expect(page.getByRole("status")).toContainText("voltou/voltaram");
-  await page.getByRole("button", { name: /controller.ts/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /controller.ts/ })
+    .click();
   await expect(
     page.getByLabel("Marcar arquivo como revisado"),
   ).not.toBeChecked();
@@ -340,24 +448,36 @@ test("filters pending files, ignores stale requests and reports save failures", 
   page,
 }) => {
   await open(page);
-  await page.getByRole("button", { name: /service.ts/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /service.ts/ })
+    .click();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
   await page.getByLabel("Marcar arquivo como revisado").check();
   await page.getByLabel("Apenas pendentes").check();
-  await expect(page.getByRole("button", { name: /service.ts/ })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Arquivos alterados" })
+      .getByRole("button", { name: /service.ts/ }),
+  ).toHaveCount(0);
   await page.getByLabel("Filtrar arquivos").fill("controller");
-  await page.getByRole("button", { name: /controller.ts/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /controller.ts/ })
+    .click();
   await expect(page.locator(".file-heading")).toContainText("controller.ts");
   await page.evaluate(() => {
     (window as any).failSave = true;
   });
   await page.getByLabel("Marcar arquivo como revisado").check();
-  await expect(page.getByRole("alert")).toContainText("Disco indisponível");
+  await expect(page.locator(".banner[role=alert]")).toContainText(
+    "Disco indisponível",
+  );
   await page.evaluate(() => {
     (window as any).failSave = false;
   });
   await page.getByRole("button", { name: "Tentar salvar" }).click();
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".banner[role=alert]")).toHaveCount(0);
 });
 
 test("rapid navigation never displays the previous request under the selected path", async ({
@@ -365,12 +485,15 @@ test("rapid navigation never displays the previous request under the selected pa
 }) => {
   await open(page);
   await page.getByRole("button", { name: /case-0.ts/ }).click();
-  await page.getByRole("button", { name: /service.ts/ }).click();
+  await page
+    .getByRole("navigation", { name: "Arquivos alterados" })
+    .getByRole("button", { name: /service.ts/ })
+    .click();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
   await page.waitForTimeout(200); // Let the deliberately slow previous request finish.
   await expect(page.locator(".file-heading")).toContainText("src/service.ts");
-  await expect(page.locator(".diff")).toContainText("src/service.ts");
-  await expect(page.locator(".diff")).not.toContainText("case-0.ts");
+  await expect(page.getByTestId("diff-editor")).toContainText("src/service.ts");
+  await expect(page.getByTestId("diff-editor")).not.toContainText("case-0.ts");
 });
 
 test("shows the real account, login guidance, missing CLI and connection uncertainty", async ({
@@ -614,7 +737,9 @@ test("history persists progress, filters and resumes the selected file", async (
     .first()
     .click();
   await page.getByRole("button", { name: "Histórico", exact: false }).click();
-  await expect(page.getByRole("alert")).toContainText("Histórico indisponível");
+  await expect(page.locator('.banner[role="alert"]')).toContainText(
+    "Histórico indisponível",
+  );
   await page.evaluate(() => {
     (window as any).historyError = false;
   });
@@ -657,4 +782,100 @@ test("repo notifications opt in persists, permission denial and poll errors are 
   await expect(page.getByRole("alert")).toContainText("GitHub indisponível");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
+test("navigates to unchanged definitions, previews them and keeps source read-only", async ({
+  page,
+}) => {
+  await open(page);
+  const call = page
+    .locator(".monaco-diff-editor .editor.modified .view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .last();
+  await call.click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("dialog").getByRole("heading")).toContainText(
+    "src/utils.ts",
+  );
+  await expect(page.getByRole("dialog").locator(".view-lines")).toContainText(
+    "value * 10",
+  );
+  await page.getByRole("button", { name: "Abrir arquivo nesta linha" }).click();
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts");
+  await expect(page.locator(".file-heading")).toContainText(
+    "arquivo de contexto",
+  );
+  await page.getByTestId("source-editor").locator("textarea").press("End");
+  await page.keyboard.type("SHOULD_NOT_EDIT");
+  await expect(
+    page.getByTestId("source-editor").locator(".view-lines"),
+  ).not.toContainText("SHOULD_NOT_EDIT");
+  await page.getByRole("button", { name: "Voltar na navegação" }).click();
+  await expect(page.locator(".file-heading")).toContainText(
+    "src/controller.ts",
+  );
+  await page.getByRole("button", { name: "Avançar na navegação" }).click();
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts");
+  await page.getByRole("button", { name: "Voltar na navegação" }).click();
+  await call.click({ modifiers: ["Meta"] });
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts", {
+    timeout: 15000,
+  });
+  await page.screenshot({
+    path: `test-results/code-workspace-${test.info().project.name}.png`,
+  });
+});
+
+test("quick opens repository files and publishes only explicit review comments", async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole("button", { name: "Comentar linha" }).click();
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("Podemos simplificar esta função?");
+  await page.evaluate(() => {
+    (window as any).commentError = true;
+  });
+  await page.getByRole("button", { name: "Publicar no GitHub" }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+    "A PR mudou",
+  );
+  await page.evaluate(() => {
+    (window as any).commentError = false;
+  });
+  await page.getByRole("button", { name: "Publicar no GitHub" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).lastComment.body))
+    .toBe("Podemos simplificar esta função?");
+  await page.keyboard.press("Meta+p");
+  await page.getByLabel("Ir ao arquivo", { exact: true }).fill("utils");
+  await page.getByLabel("Ir ao arquivo", { exact: true }).press("Enter");
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts");
+  await expect(
+    page.getByRole("button", { name: "Comentar linha" }),
+  ).toBeDisabled();
+});
+
+test("base references stay on the base snapshot with tsconfig aliases", async ({
+  page,
+}) => {
+  await open(page);
+  const call = page
+    .locator(".monaco-diff-editor .editor.original .view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .last();
+  await call.click();
+  await page.keyboard.press("F12");
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts", {
+    timeout: 15000,
+  });
+  await expect(page.locator(".file-heading")).toContainText("Base comum");
+  await expect(
+    page.getByTestId("source-editor").locator(".view-lines"),
+  ).toContainText("value * 5");
 });
