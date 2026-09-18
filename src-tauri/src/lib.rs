@@ -1,5 +1,6 @@
 mod batch;
 mod discovery;
+mod drafts;
 mod github;
 mod progress;
 mod repository;
@@ -17,6 +18,7 @@ struct Backend {
     symbols: Mutex<HashMap<String, std::sync::Arc<symbols::Index>>>,
     disk: Mutex<()>,
     monitor: Mutex<()>,
+    draft_sending: Mutex<()>,
     network: tokio::sync::Semaphore,
 }
 impl Default for Backend {
@@ -28,6 +30,7 @@ impl Default for Backend {
             symbols: Mutex::new(HashMap::new()),
             disk: Mutex::new(()),
             monitor: Mutex::new(()),
+            draft_sending: Mutex::new(()),
             network: tokio::sync::Semaphore::new(3),
         }
     }
@@ -288,7 +291,10 @@ pub fn run() {
             get_code_definitions,
             read_repository_file,
             read_repository_files,
-            post_review_comment,
+            load_review_drafts,
+            save_review_drafts,
+            submit_review_drafts,
+            check_review_submission,
             load_progress,
             save_progress
         ])
@@ -348,80 +354,29 @@ async fn read_repository_file(
     repository::read(&repo, &side, &path).await
 }
 
-#[tauri::command]
-async fn post_review_comment(
-    snapshot_id: String,
-    path: String,
-    side: String,
-    line: u32,
-    body: String,
-    state: State<'_, Backend>,
-) -> Result<String, String> {
-    if body.trim().is_empty() || body.len() > 65536 || !matches!(side.as_str(), "LEFT" | "RIGHT") {
-        return Err("Comentário inválido.".into());
+fn comment_range(patch: &str, side: &str, start: u32, end: u32) -> bool {
+    if start == 0 || end < start || !matches!(side, "LEFT" | "RIGHT") {
+        return false;
     }
-    let bundle = state
-        .bundles
-        .lock()
-        .await
-        .get(&snapshot_id)
-        .cloned()
-        .ok_or("Revisão expirada")?;
-    let file = bundle
-        .files
-        .get(&path)
-        .ok_or("Comentários de revisão precisam de um arquivo alterado")?;
-    if !file.diff.reviewable || !comment_line(file.diff.patch.as_deref().unwrap_or(""), &side, line)
-    {
-        return Err("Esta linha está fora dos hunks do diff. Selecione uma linha alterada ou de contexto próxima à alteração.".into());
-    }
-    let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
-    github::publish_comment(&bundle.snapshot, &path, &side, line, &body).await
-}
-fn comment_line(patch: &str, side: &str, target: u32) -> bool {
-    let (mut old, mut new) = (0, 0);
-    let mut hunk = false;
-    for line in patch.lines() {
-        if line.starts_with("@@ ") {
-            let parts = line.split_whitespace().collect::<Vec<_>>();
-            old = parts
-                .get(1)
-                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
+    patch
+        .lines()
+        .filter(|line| line.starts_with("@@ "))
+        .any(|line| {
+            let field = line
+                .split_whitespace()
+                .nth(if side == "LEFT" { 1 } else { 2 })
+                .unwrap_or("");
+            let mut parts = field.trim_start_matches(['-', '+']).split(',');
+            let first = parts
+                .next()
+                .and_then(|n| n.parse::<u32>().ok())
                 .unwrap_or(0);
-            new = parts
-                .get(2)
-                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
+            let count = parts
+                .next()
+                .map_or(Some(1), |n| n.parse::<u32>().ok())
                 .unwrap_or(0);
-            hunk = true;
-            continue;
-        }
-        if !hunk {
-            continue;
-        }
-        match line.as_bytes().first() {
-            Some(b' ') => {
-                if (side == "LEFT" && old == target) || (side == "RIGHT" && new == target) {
-                    return target > 0;
-                }
-                old += 1;
-                new += 1;
-            }
-            Some(b'-') => {
-                if side == "LEFT" && old == target {
-                    return target > 0;
-                }
-                old += 1;
-            }
-            Some(b'+') => {
-                if side == "RIGHT" && new == target {
-                    return target > 0;
-                }
-                new += 1;
-            }
-            _ => {}
-        }
-    }
-    false
+            count > 0 && start >= first && end < first.saturating_add(count)
+        })
 }
 #[cfg(test)]
 mod comment_tests {
@@ -429,10 +384,10 @@ mod comment_tests {
     #[test]
     fn validates_line_and_side_inside_hunks() {
         let patch = "@@ -4,2 +4,2 @@\n-old\n+new\n context\n";
-        assert!(comment_line(patch, "LEFT", 4));
-        assert!(comment_line(patch, "RIGHT", 5));
-        assert!(!comment_line(patch, "RIGHT", 3));
-        assert!(!comment_line(patch, "LEFT", 6));
+        assert!(comment_range(patch, "LEFT", 4, 4));
+        assert!(comment_range(patch, "RIGHT", 5, 5));
+        assert!(!comment_range(patch, "RIGHT", 3, 3));
+        assert!(!comment_range(patch, "LEFT", 6, 6));
     }
 }
 
@@ -505,4 +460,154 @@ async fn read_repository_files(
             .ok_or("Repositório não carregado")?
     };
     repository::read_many(&repo, &side, &paths).await
+}
+
+fn drafts_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("lince.sqlite3"))
+}
+async fn draft_bundle(
+    state: &Backend,
+    snapshot_id: &str,
+) -> Result<std::sync::Arc<batch::LoadedPr>, String> {
+    state
+        .bundles
+        .lock()
+        .await
+        .get(snapshot_id)
+        .cloned()
+        .ok_or("Revisão expirada".into())
+}
+#[tauri::command]
+async fn load_review_drafts(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+    snapshot_id: String,
+) -> Result<drafts::Draft, String> {
+    let bundle = draft_bundle(&state, &snapshot_id).await?;
+    let path = drafts_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || drafts::load(&path, &bundle.snapshot.key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn save_review_drafts(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+    snapshot_id: String,
+    revision: u64,
+    comments: Vec<drafts::Comment>,
+) -> Result<drafts::Draft, String> {
+    let bundle = draft_bundle(&state, &snapshot_id).await?;
+    let path = drafts_path(&app)?;
+    drafts::validate(&bundle, &comments)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        drafts::save(&path, &bundle.snapshot, revision, comments)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn submit_review_drafts(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+    snapshot_id: String,
+    revision: u64,
+) -> Result<drafts::Draft, String> {
+    let _sending = state.draft_sending.lock().await;
+    let bundle = draft_bundle(&state, &snapshot_id).await?;
+    let path = drafts_path(&app)?;
+    let (db, key) = (path.clone(), bundle.snapshot.key.clone());
+    let draft = tauri::async_runtime::spawn_blocking(move || drafts::load(&db, &key))
+        .await
+        .map_err(|e| e.to_string())??;
+    if draft.snapshot_id != snapshot_id || draft.revision != revision {
+        return Err(
+            "Rascunhos de outra versão ou lista alterada. Recarregue e confira a revisão.".into(),
+        );
+    }
+    drafts::validate(&bundle, &draft.comments)?;
+    let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
+    github::ensure_current(&bundle.snapshot).await?;
+    let (db, key) = (path.clone(), bundle.snapshot.key.clone());
+    let sending = tauri::async_runtime::spawn_blocking(move || drafts::begin(&db, &key, revision))
+        .await
+        .map_err(|e| e.to_string())??;
+    let result = github::request(
+        &format!(
+            "repos/{}/pulls/{}/reviews",
+            bundle.snapshot.repo, bundle.snapshot.number
+        ),
+        Some(drafts::payload(&bundle.snapshot, &sending)),
+    )
+    .await;
+    let key = bundle.snapshot.key.clone();
+    match result {
+        Ok(value) if value["html_url"].is_string() && value["state"] == "COMMENTED" => {
+            let url = value["html_url"].as_str().unwrap().to_owned();
+            tauri::async_runtime::spawn_blocking(move || {
+                drafts::finish(&path, &key, &sending.batch_id, Some(url), false)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        result => {
+            let error = result
+                .err()
+                .unwrap_or_else(|| "Resposta de envio inesperada".into());
+            // A definite rejection is safe to retry. Timeouts/disconnects are not.
+            let rejected = [
+                "HTTP 422",
+                "HTTP 403",
+                "HTTP 400",
+                "Autenticação indisponível",
+                "PR ou conteúdo não encontrado",
+                "GitHub CLI não encontrado",
+            ]
+            .iter()
+            .any(|s| error.contains(s));
+            tauri::async_runtime::spawn_blocking(move || {
+                drafts::finish(&path, &key, &sending.batch_id, None, rejected)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            Err(if rejected {
+                error
+            } else {
+                format!("O envio ficou sem confirmação. Use Verificar envio antes de tentar novamente. {error}")
+            })
+        }
+    }
+}
+#[tauri::command]
+async fn check_review_submission(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+    snapshot_id: String,
+    allow_retry: bool,
+) -> Result<drafts::Draft, String> {
+    let _sending = state.draft_sending.lock().await;
+    let bundle = draft_bundle(&state, &snapshot_id).await?;
+    let path = drafts_path(&app)?;
+    let (db, key) = (path.clone(), bundle.snapshot.key.clone());
+    let draft = tauri::async_runtime::spawn_blocking(move || drafts::load(&db, &key))
+        .await
+        .map_err(|e| e.to_string())??;
+    if draft.state == "ready" {
+        return Ok(draft);
+    }
+    let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
+    let url = github::find_review(&bundle.snapshot, &draft.batch_id).await?;
+    if url.is_none() && !allow_retry {
+        return Err("Envio ainda não encontrado no GitHub. Aguarde e verifique novamente. Se confirmar na PR que nada foi publicado, libere uma nova tentativa.".into());
+    }
+    let key = bundle.snapshot.key.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        drafts::finish(&path, &key, &draft.batch_id, url, allow_retry)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

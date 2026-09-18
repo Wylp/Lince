@@ -115,7 +115,7 @@ pub(crate) fn gh_executable() -> PathBuf {
 pub async fn api(endpoint: &str) -> Result<Value, String> {
     request(endpoint, None).await
 }
-async fn request(endpoint: &str, body: Option<Value>) -> Result<Value, String> {
+pub(crate) async fn request(endpoint: &str, body: Option<Value>) -> Result<Value, String> {
     let mut command = Command::new(gh_executable());
     command
         .args([
@@ -468,21 +468,36 @@ mod auth_tests {
     }
 }
 
-pub async fn publish_comment(
-    snapshot: &Snapshot,
-    path: &str,
-    side: &str,
-    line: u32,
-    body: &str,
-) -> Result<String, String> {
+pub async fn ensure_current(snapshot: &Snapshot) -> Result<(), String> {
     let current = api(&format!(
         "repos/{}/pulls/{}",
         snapshot.repo, snapshot.number
     ))
     .await?;
     if current["head"]["sha"] != snapshot.head_sha || current["base"]["sha"] != snapshot.base_sha {
-        return Err("A PR mudou. Atualize a revisão antes de publicar o comentário.".into());
+        return Err("A PR mudou. Os rascunhos foram preservados; atualize a PR e confira os comentários antes de enviar.".into());
     }
-    let result=request(&format!("repos/{}/pulls/{}/comments",snapshot.repo,snapshot.number),Some(serde_json::json!({"commit_id":snapshot.head_sha,"path":path,"side":side,"line":line,"body":body}))).await?;
-    string(&result, "html_url")
+    Ok(())
+}
+pub async fn find_review(snapshot: &Snapshot, batch: &str) -> Result<Option<String>, String> {
+    let marker = format!("<!-- lince-review:{batch} -->");
+    for page in 1..=20 {
+        let value = api(&format!(
+            "repos/{}/pulls/{}/reviews?per_page=100&page={page}",
+            snapshot.repo, snapshot.number
+        ))
+        .await?;
+        let reviews = value.as_array().ok_or("Resposta de revisões inválida")?;
+        for review in reviews {
+            if review["body"].as_str().is_some_and(|s| s.contains(&marker))
+                && review["state"] != "PENDING"
+            {
+                return Ok(Some(string(review, "html_url")?));
+            }
+        }
+        if reviews.len() < 100 {
+            return Ok(None);
+        }
+    }
+    Err("Revisões demais para conferir o envio automaticamente. Confira a PR no GitHub.".into())
 }

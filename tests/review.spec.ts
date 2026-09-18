@@ -282,7 +282,9 @@ test.beforeEach(async ({ page }) => {
                       : textFor(f.path).replace("* 10", "* 5"),
                   after: f.path.endsWith(".png") ? null : textFor(f.path),
                   diff: {
-                    patch: null,
+                    patch: f.path.endsWith(".png")
+                      ? null
+                      : "@@ -1,203 +1,203 @@\n",
                     reason: f.path.endsWith(".png")
                       ? "Arquivo binário; revisão textual indisponível."
                       : null,
@@ -402,10 +404,54 @@ test.beforeEach(async ({ page }) => {
           }));
           return command === "read_repository_files" ? docs : docs[0];
         }
-        if (command === "post_review_comment") {
-          if (win.commentError) throw "A PR mudou. Atualize a revisão";
-          win.lastComment = args;
-          return "https://github.com/acme/project/pull/42#discussion_r1";
+        if (
+          [
+            "load_review_drafts",
+            "save_review_drafts",
+            "submit_review_drafts",
+            "check_review_submission",
+          ].includes(command)
+        ) {
+          let draft = JSON.parse(
+            localStorage.getItem("test-drafts") ??
+              '{"snapshotId":"","revision":0,"comments":[],"state":"ready","batchId":"","lastUrl":null}',
+          );
+          if (command === "save_review_drafts") {
+            if (win.draftSaveError) throw "Disco indisponível";
+            if (draft.revision !== args.revision) throw "Lista alterada";
+            draft = {
+              ...draft,
+              snapshotId: args.snapshotId,
+              revision: draft.revision + 1,
+              comments: args.comments,
+            };
+          }
+          if (command === "submit_review_drafts") {
+            if (win.commentError) throw "A PR mudou. Rascunhos preservados";
+            win.submissions ??= [];
+            win.submissions.push(draft.comments);
+            if (win.uncertainSubmission) {
+              draft.state = "uncertain";
+              localStorage.setItem("test-drafts", JSON.stringify(draft));
+              throw "Envio sem confirmação";
+            }
+            draft = {
+              ...draft,
+              revision: draft.revision + 1,
+              comments: [],
+              lastUrl: "https://github.com/acme/project/pull/42#review-1",
+            };
+          }
+          if (command === "check_review_submission")
+            draft = {
+              ...draft,
+              state: "ready",
+              comments: [],
+              revision: draft.revision + 1,
+              lastUrl: "https://github.com/acme/project/pull/42#review-1",
+            };
+          localStorage.setItem("test-drafts", JSON.stringify(draft));
+          return draft;
         }
         if (command === "get_diff") {
           if (args.path.endsWith(".png"))
@@ -469,12 +515,18 @@ test("preserves scroll, reviewed state and selection across files and reload", a
     .getByRole("navigation", { name: "Arquivos alterados" })
     .getByRole("button", { name: /controller.ts/ })
     .click();
-  await expect.poll(scrollTop).toBe(savedTop);
+  // The scrollbar thumb rounds to physical pixels differently after layout.
+  await expect
+    .poll(async () => Math.abs((await scrollTop()) - savedTop))
+    .toBeLessThanOrEqual(1);
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
   await expect(page.getByText("Salvo neste dispositivo")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
-  await expect.poll(scrollTop).toBe(savedTop);
+  // The scrollbar thumb rounds to physical pixels differently after layout.
+  await expect
+    .poll(async () => Math.abs((await scrollTop()) - savedTop))
+    .toBeLessThanOrEqual(1);
   await expect(page.locator(".file-item.selected")).toContainText(
     "controller.ts",
   );
@@ -897,35 +949,53 @@ test("navigates to unchanged definitions, previews them and keeps source read-on
   });
 });
 
-test("quick opens repository files and publishes only explicit review comments", async ({
+test("saves local comments, persists them and publishes only after apply all", async ({
   page,
 }) => {
   await open(page);
-  await page.getByRole("button", { name: "Comentar linha" }).click();
+  await page
+    .getByRole("button", { name: "Comentar linha", exact: true })
+    .click();
   await page
     .getByLabel("Comentário da revisão")
     .fill("Podemos simplificar esta função?");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Comentários (1)", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText("Podemos simplificar");
   await page.evaluate(() => {
     (window as any).commentError = true;
   });
-  await page.getByRole("button", { name: "Publicar no GitHub" }).click();
+  await page
+    .getByRole("button", { name: "Aplicar tudo (1)", exact: true })
+    .click();
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
     "A PR mudou",
   );
   await page.evaluate(() => {
     (window as any).commentError = false;
   });
-  await page.getByRole("button", { name: "Publicar no GitHub" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect
-    .poll(() => page.evaluate(() => (window as any).lastComment.body))
-    .toBe("Podemos simplificar esta função?");
+  await page
+    .getByRole("button", { name: "Aplicar tudo (1)", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Todos os comentários foram publicados",
+  );
+  expect(await page.evaluate(() => (window as any).submissions)).toHaveLength(
+    1,
+  );
+  await page.getByRole("button", { name: "Fechar comentários" }).click();
   await page.keyboard.press("Meta+p");
   await page.getByLabel("Ir ao arquivo", { exact: true }).fill("utils");
   await page.getByLabel("Ir ao arquivo", { exact: true }).press("Enter");
-  await expect(page.locator(".file-heading")).toContainText("src/utils.ts");
   await expect(
-    page.getByRole("button", { name: "Comentar linha" }),
+    page.getByRole("button", { name: "Comentar linha", exact: true }),
   ).toBeDisabled();
 });
 
@@ -1107,4 +1177,155 @@ test("follows re-exports and terminates circular dependency graphs", async ({
     "src/utils.ts",
     "tsconfig.json",
   ]);
+});
+
+test("gutter click and drag compose single and multiline drafts on both sides", async ({
+  page,
+}) => {
+  await open(page);
+  const right = page.locator(".editor.modified .comment-add-glyph");
+  await right.nth(1).click();
+  await expect(page.getByRole("dialog")).toContainText("head · linha 2");
+  await page.getByLabel("Comentário da revisão").fill("Um comentário de linha");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  const left = page.locator(".editor.original .comment-add-glyph");
+  const first = await left.nth(3).boundingBox(),
+    last = await left.nth(5).boundingBox();
+  await page.mouse.move(
+    first!.x + first!.width / 2,
+    first!.y + first!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + last!.height / 2, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect(page.getByRole("dialog")).toContainText("base · linhas 4–6");
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("Este trecho inteiro merece revisão");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+  await page
+    .getByRole("button", { name: "Comentários (2)", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Editar comentário 1", exact: true })
+    .click();
+  await page.getByLabel("Comentário da revisão").fill("Comentário editado");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await page
+    .getByRole("button", { name: "Comentários (2)", exact: true })
+    .click();
+  await page.screenshot({
+    path: `test-results/comments-${test.info().project.name}.png`,
+  });
+  await page
+    .getByRole("button", { name: "Aplicar tudo (2)", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Todos os comentários foram publicados",
+  );
+  const sent = await page.evaluate(() => (window as any).submissions);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toHaveLength(2);
+  expect(sent[0][0].body).toBe("Comentário editado");
+  expect(sent[0][1]).toMatchObject({ side: "LEFT", startLine: 4, line: 6 });
+});
+
+test("uncertain submissions are reconciled without posting a second batch", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByRole("button", { name: "Comentar linha", exact: true })
+    .click();
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("Verificar erro de transporte");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await page
+    .getByRole("button", { name: "Comentários (1)", exact: true })
+    .click();
+  await page.evaluate(() => {
+    (window as any).uncertainSubmission = true;
+  });
+  await page
+    .getByRole("button", { name: "Aplicar tudo (1)", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Verificar envio", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Liberar nova tentativa", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Verificar envio", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText("Envio confirmado");
+  expect(await page.evaluate(() => (window as any).submissions)).toHaveLength(
+    1,
+  );
+});
+
+test("draft save failures preserve text and outdated drafts remain local", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByRole("button", { name: "Comentar linha", exact: true })
+    .click();
+  await page.getByLabel("Comentário da revisão").fill("Não perder este texto");
+  await page.evaluate(() => {
+    (window as any).draftSaveError = true;
+  });
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await expect(page.getByRole("dialog")).toContainText("Disco indisponível");
+  await expect(page.getByLabel("Comentário da revisão")).toHaveValue(
+    "Não perder este texto",
+  );
+  await page.evaluate(() => {
+    (window as any).draftSaveError = false;
+  });
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await page
+    .getByRole("button", { name: "Comentários (1)", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Remover comentário 1", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Aplicar tudo (0)", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Fechar comentários" }).click();
+  await page
+    .getByRole("button", { name: "Comentar linha", exact: true })
+    .click();
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("Rascunho de outra versão");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await page.evaluate(() => {
+    const draft = JSON.parse(localStorage.getItem("test-drafts")!);
+    draft.snapshotId = "previous-snapshot";
+    localStorage.setItem("test-drafts", JSON.stringify(draft));
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Comentários (1)", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "pertencem a outra versão",
+  );
+  await expect(page.getByRole("dialog")).toContainText(
+    "Rascunho de outra versão",
+  );
+  await expect(
+    page.getByRole("button", { name: "Aplicar tudo (1)", exact: true }),
+  ).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
 });

@@ -1,3 +1,6 @@
+import { ReviewComments } from "./ReviewComments";
+import type { CommentsHandle, DraftComment } from "./ReviewComments";
+import { commentRanges, selectedLines } from "./comment-lines";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -62,15 +65,8 @@ export default function CodeWorkspace({
     [pending, setPending] = useState(false),
     [doc, setDoc] = useState<Document | null>(null),
     [message, setMessage] = useState("");
-  const [comment, setComment] = useState<{
-      path: string;
-      side: "LEFT" | "RIGHT";
-      line: number;
-    } | null>(null),
-    [body, setBody] = useState(""),
-    [posting, setPosting] = useState(false),
-    [commentError, setCommentError] = useState("");
-  const commentDialog = useRef<HTMLDialogElement>(null);
+  const comments = useRef<CommentsHandle>(null);
+  const [drafts, setDrafts] = useState<DraftComment[]>([]);
   const [peek, setPeek] = useState<monaco.languages.Location[]>([]),
     [peekIndex, setPeekIndex] = useState(0),
     [quick, setQuick] = useState(false),
@@ -213,9 +209,6 @@ export default function CodeWorkspace({
   useEffect(() => {
     if (peek.length) dialog.current?.showModal();
   }, [peek]);
-  useEffect(() => {
-    if (comment) commentDialog.current?.showModal();
-  }, [comment]);
   useEffect(() => {
     if (quick) finder.current?.showModal();
   }, [quick]);
@@ -590,16 +583,23 @@ export default function CodeWorkspace({
               if (!h) return;
               const old = h.diff?.getOriginalEditor();
               const ed = old?.hasTextFocus() ? old : h.editor;
-              setComment({
+              const range = ed.getSelection()
+                ? selectedLines(ed.getSelection()!)
+                : { startLine: 1, line: 1 };
+              comments.current?.compose({
                 path: currentFile!.path,
                 side: ed === old || tab.side === "base" ? "LEFT" : "RIGHT",
-                line: ed.getPosition()?.lineNumber ?? 1,
+                ...range,
               });
-              setCommentError("");
             }}
           >
             Comentar linha
           </button>
+          <ReviewComments
+            ref={comments}
+            snapshot={snapshot}
+            onChange={setDrafts}
+          />
           <button
             disabled={!semanticLanguage(language(tab.path))}
             title="Referências nos arquivos carregados do contexto JS/TS atual"
@@ -641,6 +641,26 @@ export default function CodeWorkspace({
               positions.current.set(key(tab), { top, left });
               if (tab.mode === "diff") saveScroll(tab.path, top, left);
             }}
+            commentable={
+              tab.mode === "diff"
+                ? commentRanges(loaded?.diff.patch)
+                : undefined
+            }
+            draftRanges={
+              tab.mode === "diff"
+                ? drafts.filter((d) => d.path === tab.path)
+                : []
+            }
+            onComment={
+              tab.mode === "diff" && currentFile && loaded?.diff.reviewable
+                ? (side, range) =>
+                    comments.current?.compose({
+                      path: currentFile.path,
+                      side,
+                      ...range,
+                    })
+                : undefined
+            }
             onReady={(h) => {
               handle.current = h;
               for (const editor of [
@@ -733,61 +753,6 @@ export default function CodeWorkspace({
               }}
             >
               Abrir arquivo nesta linha
-            </button>
-          </footer>
-        </dialog>
-      )}
-      {comment && (
-        <dialog
-          className="comment-dialog"
-          ref={commentDialog}
-          onCancel={(e) => {
-            if (posting) e.preventDefault();
-            else setComment(null);
-          }}
-        >
-          <h3>Comentar no GitHub</h3>
-          <p>
-            {comment.path} · {comment.side === "LEFT" ? "base" : "head"} · linha{" "}
-            {comment.line}
-          </p>
-          <label>
-            Comentário
-            <textarea
-              autoFocus
-              aria-label="Comentário da revisão"
-              value={body}
-              disabled={posting}
-              onChange={(e) => setBody(e.target.value)}
-              maxLength={16000}
-            />
-          </label>
-          {commentError && <p role="alert">{commentError}</p>}
-          <footer>
-            <button disabled={posting} onClick={() => setComment(null)}>
-              Cancelar
-            </button>
-            <button
-              className="primary"
-              disabled={posting || !body.trim()}
-              onClick={() => {
-                setPosting(true);
-                setCommentError("");
-                void invoke<string>("post_review_comment", {
-                  snapshotId: snapshot.id,
-                  ...comment,
-                  body,
-                })
-                  .then(() => {
-                    setComment(null);
-                    setBody("");
-                    setMessage("Comentário publicado no GitHub.");
-                  })
-                  .catch((e) => setCommentError(String(e)))
-                  .finally(() => setPosting(false));
-              }}
-            >
-              {posting ? "Publicando…" : "Publicar no GitHub"}
             </button>
           </footer>
         </dialog>

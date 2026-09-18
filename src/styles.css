@@ -2177,3 +2177,101 @@ progress::-webkit-progress-value {
   width: 0;
   margin-left: -7px;
 }
+
+.monaco-editor .comment-add-glyph {
+  cursor: pointer;
+  opacity: 0.25;
+  background: #20482e;
+  border-radius: 3px;
+}
+.monaco-editor .comment-add-glyph::before {
+  content: "+";
+  color: #a2edb6;
+  font: bold 16px/22px sans-serif;
+  text-align: center;
+  display: block;
+}
+.monaco-editor .comment-add-glyph:hover {
+  opacity: 1;
+  background: #30734a;
+}
+.monaco-editor .comment-range-selection {
+  background: #73ce982b;
+}
+.monaco-editor .comment-draft-marker {
+  border-left: 3px solid #e8bd6b;
+  margin-left: 3px;
+}
+.review-drafts {
+  color: #d3e6da;
+  background: #142019;
+  border: 1px solid #42664d;
+  border-radius: 10px;
+  font-size: 13px;
+  padding: 22px;
+  width: min(740px, 90vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  white-space: normal;
+}
+.review-drafts::backdrop {
+  background: #0009;
+}
+.review-drafts header {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+.review-drafts h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.review-drafts p {
+  line-height: 1.6;
+}
+.review-drafts .comment-location,
+.draft-comment-list strong {
+  font: 11px/1.6 var(--diff-font-family);
+  overflow-wrap: anywhere;
+}
+.review-drafts button {
+  padding: 7px 11px;
+  font-size: 12px;
+  border: 1px solid #42664d;
+  background: #23392b;
+  border-radius: 5px;
+}
+.review-drafts button.primary {
+  background: #a6e5b9;
+  color: #102718;
+}
+.review-drafts footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.draft-comment-list article {
+  border: 1px solid #334b3b;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 10px 0;
+}
+.draft-comment-list article > div {
+  display: flex;
+  gap: 8px;
+}
+.review-drafts .draft-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-drafts [role="alert"] {
+  color: #f1bc93;
+  white-space: pre-wrap;
+}
+.review-drafts .retry-confirmation {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}

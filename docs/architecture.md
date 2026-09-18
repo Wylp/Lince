@@ -11,7 +11,7 @@ A renderização atual usa Monaco Editor, com diff e código somente leitura, si
 5. Um cache Git bare próprio busca commits ausentes, sem checkout. Árvores e blobs locais são lidos por SHA, com conteúdo deduplicado em lote. Renomeações usam o caminho anterior na base.
 6. **Patches da API são ignorados**: o Rust calcula patches completos sobre os blobs. A integridade e os limites são verificados antes de liberar o snapshot.
 
-A autenticação permanece com o gh. A WebView recebe apenas comandos IPC específicos, sem acesso genérico a shell ou filesystem. Workers do editor são assets locais. Nenhum código do repositório é executado. A única escrita remota deste fluxo é o comentário explicitamente publicado pelo usuário; o backend valida linha, lado e SHAs antes do envio.
+A autenticação permanece com o gh. A WebView recebe apenas comandos IPC específicos, sem acesso genérico a shell ou filesystem. Workers do editor são assets locais. Nenhum código do repositório é executado. A única escrita remota deste fluxo é a revisão em lote explicitamente publicada em Aplicar tudo; o backend valida intervalos, lados e SHAs antes do envio. Rascunhos ficam somente no SQLite até essa ação.
 
 Veja [carregamento em lote](batch-loading.md) e [comentários e cache](code-workspace.md).
 

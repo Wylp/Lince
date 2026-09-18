@@ -9,7 +9,7 @@ O workspace usa **Monaco Editor 0.56**, editor do VS Code, para diff lado a lado
 - Abas (até 12), histórico voltar/avançar, **Cmd/Ctrl+P** para localizar arquivos.
 - **Cmd/Ctrl+click** ou **F12** abre a definição; **Alt+F12** / Preview mostra a definição em um diálogo. Referências usa o serviço de linguagem do TypeScript.
 - Arquivo completo e diff compartilham o snapshot. A origem base/head permanece identificada e a navegação no lado antigo usa a base.
-- Posição dos diffs alterados, seleção e marcações persistem em SQLite. Abas, posições de arquivos de contexto, filtros e rascunhos de comentário ficam em memória nesta versão.
+- Posição dos diffs alterados, seleção e marcações persistem em SQLite. Rascunhos de comentários também persistem no SQLite após salvar. Abas, posições de arquivos de contexto, filtros e texto ainda não salvo do formulário ficam em memória.
 
 ### Dez linguagens para previews
 
@@ -56,9 +56,15 @@ Código, inclusive de repositórios privados, **permanece no cache em disco**. A
 
 ## Comentários
 
-Selecione uma linha de um arquivo alterado e clique em **Comentar linha**. O formulário informa caminho, linha e lado; somente **Publicar no GitHub** cria um comentário de revisão. Cancelar não envia nada. O backend valida a linha contra os hunks completos, verifica se base/head ainda correspondem ao snapshot e envia o comentário associado ao commit revisado. Falha de envio preserva o texto no formulário; mudar de sessão ou fechar o app pode perder rascunhos não enviados.
+Clique no **+** ao lado de uma linha ou arraste o + para selecionar várias linhas. Também é possível selecionar texto e usar **Comentar linha**, o menu de contexto ou Cmd/Ctrl+Alt+M. Funciona na base e no head; cada comentário deve ficar dentro de um único hunk e lado do diff.
 
-Arquivos de contexto não alterados não aceitam comentários de diff. Aprovação, submissão de uma revisão em lote, sugestões editáveis e leitura/resposta de threads existentes ainda não foram implementadas.
+**Salvar rascunho** grava o comentário no SQLite sem fazer escrita no GitHub. Em **Comentários (N)**, confira, edite ou remova os rascunhos. Somente **Aplicar tudo (N)** publica todos de uma vez como uma revisão `COMMENT`, sem aprovar nem solicitar alterações. Texto no formulário ainda não salvo não persiste ao fechar. Limites locais: 50 comentários por lote, 256 KiB de texto total e 16.000 caracteres por formulário.
+
+O backend valida os intervalos e verifica base/head antes do envio. Se a PR mudar, os rascunhos antigos permanecem disponíveis para consulta e cópia, mas não são transferidos automaticamente para outras linhas. Descarte o lote antigo antes de começar na nova versão.
+
+O lote é congelado em disco antes do POST. Em uma falha de transporte ou encerramento durante o envio, **Verificar envio** procura o identificador do lote nas revisões da PR, sem republicar. Se o GitHub já recebeu a revisão, os rascunhos são concluídos localmente. Liberar nova tentativa exige conferir a PR e confirmar explicitamente que o lote não foi publicado; não há reenvio automático. SQLite e GitHub não compartilham uma transação, portanto essa reconciliação também cobre falhas entre publicação e gravação local.
+
+Arquivos de contexto não alterados não aceitam comentários de diff. Aprovação, sugestões editáveis e leitura/resposta de threads existentes ainda não foram implementadas.
 
 ## Escolha e custo do editor
 
@@ -66,6 +72,6 @@ A primeira versão avaliou `react-diff-view`: adequada a patches, mas sem um ser
 
 Monaco é carregado por importação dinâmica ao entrar no workspace. Workers e linguagens são assets locais, sem CDN. O custo é maior: aproximadamente 3,95 MB do módulo do editor e 7,03 MB do worker TypeScript antes de gzip. A home permanece em outro módulo (~278 kB). O Vite emite aviso de chunk grande; os testes de produção cobrem o carregamento dos workers. Ainda falta benchmark com grandes monorepos e validação nativa Windows/Linux.
 
-Referências: [Monaco](https://github.com/microsoft/monaco-editor), [API Monaco](https://microsoft.github.io/monaco-editor/docs.html), [git fetch](https://git-scm.com/docs/git-fetch), [git cat-file](https://git-scm.com/docs/git-cat-file), [comentários de revisão GitHub](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request).
+Referências: [Monaco](https://github.com/microsoft/monaco-editor), [API Monaco](https://microsoft.github.io/monaco-editor/docs.html), [git fetch](https://git-scm.com/docs/git-fetch), [git cat-file](https://git-scm.com/docs/git-cat-file), [revisões GitHub](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request).
 
 Parsers: [Tree-sitter e bindings Rust](https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_rust/README.md). Gramáticas oficiais são dependências fixadas no `Cargo.lock`.

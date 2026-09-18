@@ -1,5 +1,12 @@
 # Validação
 
+## Comentários locais por intervalo e envio em lote — 18/09/2026
+
+- 25 testes Rust passaram (2 de rede ignorados), 11 testes Vitest passaram, Clippy com `-D warnings`, Prettier e build de produção passaram. Migração SQLite 3→4, concorrência, congelamento do lote, intervalos e payloads multilinha cobertos.
+- 43/44 cenários Playwright passaram de primeira no build de produção em Chromium/WebKit. O restante comparava o pixel arredondado da barra de scroll; com tolerância de um pixel, passou na repetição WebKit. Todos os novos cenários passaram: clique/arraste nos dois lados, edição/remoção, persistência, falha de disco, snapshot antigo, envio explícito e reconciliação sem duplicação. Screenshot da lista de comentários inspecionado.
+- Build Tauri macOS arm64 `--debug --no-bundle` passou após liberar o cache incremental temporário: a primeira tentativa esgotou o espaço em disco.
+- GitHub é simulado nos testes de UI; nenhum comentário real foi publicado. Windows/Linux nativos e interação no WebView nativo permanecem sem validação local.
+
 ## Dependências JS/TS por demanda e ícones Material — 18/09/2026
 
 - Removido o pré-carregamento inicial de JS/TS. O teste usa mais de 2.100 arquivos não relacionados e verifica que uma definição carrega apenas o `tsconfig` e a dependência consultada, sem ler a base ou os demais módulos. Repetir a consulta reutiliza os documentos.

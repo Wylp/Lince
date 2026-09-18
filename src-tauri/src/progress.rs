@@ -33,7 +33,7 @@ impl Default for Store {
 }
 
 pub(crate) type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
-const SCHEMA: u32 = 3;
+const SCHEMA: u32 = 4;
 
 fn legacy(path: &Path) -> DbResult<Store> {
     match std::fs::read(path) {
@@ -111,6 +111,9 @@ pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
         }
         if locked_version < 3 {
             tx.execute_batch("CREATE TABLE watched_repos(account TEXT NOT NULL,repo TEXT NOT NULL,last_seen INTEGER NOT NULL,PRIMARY KEY(account,repo));")?;
+        }
+        if locked_version < 4 {
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS review_drafts(review_key TEXT PRIMARY KEY NOT NULL,payload TEXT NOT NULL);")?;
         }
         tx.pragma_update(None, "user_version", SCHEMA)?;
         tx.commit()?;
