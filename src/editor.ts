@@ -192,6 +192,7 @@ export function referenceRange(
 export const options: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: "lince",
   readOnly: true,
+  renderValidationDecorations: "on",
   domReadOnly: true,
   automaticLayout: true,
   fontSize: 13,
@@ -211,7 +212,15 @@ export const options: monaco.editor.IStandaloneEditorConstructionOptions = {
   bracketPairColorization: { enabled: true },
   overviewRulerBorder: false,
 };
+export interface TypeAlert {
+  name: string;
+  type: string;
+  line: number;
+  column: number;
+}
 interface ReviewWorker {
+  reviewReferences(fileName: string, position: number): Promise<any[]>;
+  reviewTypes(fileName: string): Promise<TypeAlert[]>;
   discoverDependencies(
     sources: string[],
     repositoryFiles: string[],
@@ -221,6 +230,7 @@ interface ReviewWorker {
 export class Project {
   readonly prefix: string;
   private owned = new Set<monaco.editor.ITextModel>();
+  private recentViews = new Set<string>();
   private disposables: monaco.IDisposable[] = [];
   private queue: Promise<unknown> = Promise.resolve();
   private configuration = "";
@@ -255,8 +265,15 @@ export class Project {
       ? { path: relative.slice(slash + 1), side }
       : null;
   }
-  model(doc: Document) {
+  model(doc: Document, dependency = false) {
     const uri = this.uri(doc.path, doc.side);
+    if (!dependency) {
+      // Protect views prepared by React before Monaco has attached them.
+      this.recentViews.delete(uri.toString());
+      this.recentViews.add(uri.toString());
+      if (this.recentViews.size > 12)
+        this.recentViews.delete(this.recentViews.values().next().value!);
+    }
     let model = monaco.editor.getModel(uri);
     if (!model) {
       model = monaco.editor.createModel(
@@ -355,6 +372,7 @@ export class Project {
       allowJs: true,
       allowNonTsExtensions: true,
       checkJs: false,
+      strictNullChecks: true,
       allowImportingTsExtensions: true,
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.ESNext,
@@ -438,7 +456,7 @@ export class Project {
         });
         if (this.disposed) return;
         for (const doc of docs) {
-          if (doc.text !== null) this.model(doc);
+          if (doc.text !== null) this.model(doc, true);
           else
             this.notice(
               `Dependência indisponível: ${doc.path}. ${doc.reason ?? ""}`,
@@ -494,6 +512,7 @@ export class Project {
     for (const candidate of this.owned) {
       if (
         !graph.has(candidate.uri.toString()) &&
+        !this.recentViews.has(candidate.uri.toString()) &&
         !candidate.isAttachedToEditor()
       ) {
         candidate.dispose();
@@ -610,6 +629,71 @@ export class Project {
       ...location,
       originSelectionRange: referenceRange(model, position),
     }));
+  }
+  async typeAlerts(model: monaco.editor.ITextModel) {
+    return (
+      (await this.query(model, (w) =>
+        (w as unknown as ReviewWorker).reviewTypes(model.uri.toString()),
+      )) ?? []
+    );
+  }
+  async reviewUsages(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    progress: (text: string) => void,
+    cancelled: () => boolean = () => false,
+  ) {
+    return this.query(model, async (w) => {
+      const origin = this.location(model.uri)!;
+      const candidates = this.index[origin.side].filter((f) =>
+        /\.[cm]?[jt]sx?$/.test(f.path),
+      );
+      const scope = new Set<string>(
+        this.graphs.get(model.uri.toString()) ?? [model.uri.toString()],
+      );
+      const started = performance.now();
+      // Search only on request, from the immutable local snapshot. Bound memory.
+      let bytes = 0,
+        scanned = 0;
+      const selected = [];
+      for (const file of candidates) {
+        if (
+          file.size > 1024 * 1024 ||
+          bytes + file.size > 32 * 1024 * 1024 ||
+          selected.length >= 5000
+        )
+          continue;
+        bytes += file.size;
+        selected.push(file);
+      }
+      for (let i = 0; i < selected.length; i += 8) {
+        if (performance.now() - started > 20000) break;
+        if (this.disposed || cancelled()) throw new Error("Busca encerrada");
+        progress(`Buscando usos: ${i} de ${selected.length} arquivos JS/TS…`);
+        const docs = await invoke<Document[]>("read_repository_files", {
+          snapshotId: this.id,
+          side: origin.side,
+          paths: selected.slice(i, i + 8).map((f) => f.path),
+        });
+        if (this.disposed || cancelled()) throw new Error("Busca encerrada");
+        for (const doc of docs)
+          if (doc.text !== null) {
+            scope.add(this.model(doc, true).uri.toString());
+            scanned++;
+          }
+      }
+      const getWorker = await (model.getLanguageId() === "javascript"
+        ? ts.getJavaScriptWorker()
+        : ts.getTypeScriptWorker());
+      await getWorker(...[...scope].map((uri) => monaco.Uri.parse(uri)));
+      await (w as unknown as ReviewWorker).setScope([...scope]);
+      const refs = await (w as unknown as ReviewWorker).reviewReferences(
+        model.uri.toString(),
+        model.getOffsetAt(position),
+      );
+      const entries = this.locations(refs, model.uri);
+      return { entries, scanned, total: candidates.length };
+    });
   }
   async references(model: monaco.editor.ITextModel, position: monaco.Position) {
     return this.locations(

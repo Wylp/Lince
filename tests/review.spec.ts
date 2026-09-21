@@ -285,6 +285,15 @@ test.beforeEach(async ({ page }) => {
             : snapshot;
         }
         const textFor = (path: string) =>
+          (win.insightFixture && path === "src/controller.ts"
+            ? 'export function inspect(value: string | { id: number }, safe: "a" | "b") { return typeof value === "string" ? value : value.id; }\n'
+            : "") +
+          (win.insightFixture && path === "src/service.ts"
+            ? "import { calculateTotal as total } from './utils';\nexport const amount = total(3);\n"
+            : "") +
+          (win.insightFixture && path === "tests/case-0.ts"
+            ? "export function calculateTotal() { return 1; }\ncalculateTotal();\n"
+            : "") +
           (path === "src/controller.ts"
             ? "import { calculateTotal } from '@/utils';\nexport function controller() { return calculateTotal(2); }\n"
             : path === "src/utils.ts"
@@ -1160,9 +1169,18 @@ test("loads JS dependencies on demand beyond 2000 unrelated files and only on re
   page,
 }) => {
   await open(page);
-  expect(await page.evaluate(() => (window as any).codeReads ?? [])).toEqual(
-    [],
+  const initialReads = await page.evaluate(
+    () => (window as any).codeReads ?? [],
   );
+  expect(
+    initialReads.every(
+      (r: any) =>
+        r.side === "head" &&
+        r.paths.every((p: string) =>
+          ["tsconfig.json", "src/utils.ts"].includes(p),
+        ),
+    ),
+  ).toBe(true);
   const call = page
     .locator(".monaco-diff-editor .editor.modified .view-lines")
     .getByText("calculateTotal", { exact: true })
@@ -1712,4 +1730,77 @@ test("focus mode persists and advances only after saved decisions, with a clear 
   await expect(page.locator(".focus-mode-banner")).toHaveCount(0);
   await tree.getByRole("button", { name: /controller.ts/ }).click();
   await expect(heading).toContainText("controller.ts");
+});
+
+test("type attention uses inferred unions and usages carry local review states", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).insightFixture = true;
+  });
+  await open(page);
+  await expect(
+    page.getByRole("button", { name: "Tipos (1)", exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Tipos (1)", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await expect(panel.locator(".insight-row")).toHaveCount(1);
+  await expect(panel.locator(".insight-row")).toContainText("value");
+  await expect(panel.locator(".insight-row")).toContainText("string");
+  await expect(panel).toContainText("não um erro confirmado");
+  await page.getByRole("button", { name: "Fechar análise" }).click();
+  await page
+    .getByRole("group", { name: "Decisão sobre o arquivo" })
+    .getByRole("button", { name: "Discordo", exact: true })
+    .click();
+  await page
+    .locator(".editor.modified .view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .last()
+    .click();
+  await page
+    .getByRole("button", { name: "Prévia da definição", exact: false })
+    .click();
+  await expect(panel.getByRole("heading")).toContainText("src/utils.ts");
+  await page.getByRole("button", { name: "Abrir arquivo nesta linha" }).click();
+  await expect(page.locator(".file-heading")).toContainText("src/utils.ts");
+  await page
+    .getByTestId("source-editor")
+    .locator(".view-lines")
+    .getByText("calculateTotal", { exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Usos e revisão", exact: true })
+    .click();
+  await expect(panel).toContainText(
+    "arquivos alterados com leitura registrada",
+    { timeout: 20000 },
+  );
+  await expect(panel).toContainText("1/2 arquivos alterados");
+  await expect(
+    panel.locator(".insight-row").filter({ hasText: "tests/case-0.ts" }),
+  ).toHaveCount(0);
+  await expect(
+    panel
+      .locator(".insight-row")
+      .filter({ hasText: "src/controller.ts" })
+      .first(),
+  ).toContainText("!");
+  await expect(
+    panel
+      .locator(".insight-row")
+      .filter({ hasText: "src/service.ts" })
+      .first()
+      .getByLabel("Pendente", { exact: true }),
+  ).toHaveCount(1);
+  await expect(panel).toContainText("Não é garantia de cobertura completa");
+  await page.screenshot({
+    path: `test-results/code-insights-${test.info().project.name}.png`,
+  });
+  await panel
+    .locator(".insight-row")
+    .filter({ hasText: "src/service.ts" })
+    .first()
+    .click();
+  await expect(page.locator(".file-heading")).toContainText("src/service.ts");
 });

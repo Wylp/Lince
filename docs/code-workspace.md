@@ -91,3 +91,13 @@ O cabeçalho e o clique direito oferecem Concordo, Discordo e Não li. Pastas ap
 Em Configurações, o modo foco (desativado inicialmente) inicia no primeiro arquivo pendente e bloqueia a troca manual de arquivos, o histórico de navegação, a busca e as ações em lote. Cada decisão salva abre o próximo pendente; falhas de gravação mantêm o arquivo atual. Um comentário em edição precisa ser salvo ou cancelado antes de decidir. Prévias de definições continuam disponíveis e o botão Sair do modo foco libera a navegação. A preferência persiste no SQLite; o app continua iniciando na home com URL vazia.
 
 Validação desta mudança: testes de navegador em Chromium/WebKit, testes unitários do modelo, migração SQLite 5→6 e build nativa macOS. Windows/Linux ainda dependem de validação nativa nesses sistemas.
+
+## Tipos e revisão dos usos
+
+A análise de JS/TS reutiliza o TypeChecker do worker Monaco/TypeScript. Ao abrir um arquivo, carrega seu grafo de dependências sob demanda e identifica até 200 declarações de variáveis, parâmetros ou propriedades com uniões entre categorias (string, objeto, número, booleano, null/undefined). Uniões de literais da mesma categoria não geram aviso. Avisos informativos aparecem no editor somente leitura e no botão Tipos. Não são diagnósticos de bug: uma união pode ser intencional. `any`, dependências indisponíveis e valores de execução limitam a detecção; strictNullChecks é habilitado para a análise, independentemente do projeto. Não instala pacotes nem executa código da PR.
+
+Usos e revisão consulta referências semânticas do símbolo sob o cursor, excluindo sua declaração. A busca lê JS/TS do mesmo snapshot/base ou head, em lotes locais de oito arquivos, apenas quando solicitada. Respeita os limites de 1 MiB por arquivo, 5.000 arquivos, 32 MiB e 20 segundos de leitura; mostra quantidade lida/total. Fechar o painel cancela os próximos lotes. Usa a configuração do arquivo de origem: monorepos com múltiplos tsconfigs, dependências ausentes, usos dinâmicos e outras linguagens podem ter referências omitidas, mesmo quando todos os arquivos foram lidos. Não afirma cobertura completa.
+
+Os resultados mostram revisão por arquivo, não por ocorrência. Concordo/Discordo contam como leitura, mas discordâncias continuam explícitas. Não li e Aprovado sem ler não contam como leitura. Arquivos fora do diff não são considerados revisados; ocorrências na base não herdam estado do head. No modo foco, o painel pode ser consultado, mas a navegação para outro arquivo continua bloqueada.
+
+Essa análise semântica inicialmente suporta JS/TS; as oito outras linguagens continuam com navegação por candidatos sintáticos, sem inferência de tipos ou rastreamento confiável de usos.

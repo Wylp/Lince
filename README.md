@@ -45,6 +45,8 @@ Use **Concordo**, **Discordo** ou **Não li** no cabeçalho do arquivo ou no men
 
 O Lince mantém um cache Git próprio dos commits, sem alterar seu checkout. A navegação JS/TS carrega as dependências do arquivo consultado sob demanda, separando base e head; não pré-indexa o monorepo inteiro. As árvores usam ícones locais do Material Icon Theme. **Atualizar PR** busca novos commits. Código permanece nesse cache em disco; progresso continua no SQLite. [Atalhos, cache e limites por linguagem](docs/code-workspace.md).
 
+**Tipos** mostra pontos de atenção em declarações JS/TS com categorias diferentes, como `string | objeto`, sem executar o código. Esses avisos são informativos: uma união não é necessariamente um erro. Na declaração ou no uso de uma função, posicione o cursor no nome e clique em **Usos e revisão** para buscar referências no snapshot local e ver o estado de revisão de cada arquivo. Arquivos fora do diff e ocorrências na base não recebem o estado do head. A interface informa o alcance e os limites da análise.
+
 ## Listar PRs e configurar monorepos
 
 Clique em **Listar PRs** para navegar pelas PRs abertas dos repositórios em que sua conta participa. Filtre por autor da PR, repositório, linguagem ou serviço/codebase. A lista prioriza os repos mais revisados recentemente no Lince; cada grupo mostra suas PRs mais novas e permite carregar mais.

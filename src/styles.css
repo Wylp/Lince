@@ -2632,3 +2632,27 @@ progress::-webkit-progress-value {
   padding: 4px 14px;
   font-size: 11px;
 }
+
+.code-insights {
+  width: min(850px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+}
+.code-insights header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.insight-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  width: 100%;
+  padding: 12px;
+  margin: 6px 0;
+}
+.insight-row code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

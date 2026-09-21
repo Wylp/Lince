@@ -1,3 +1,4 @@
+import { CodeInsights } from "./CodeInsights";
 import { LoadingState, editorLoadingSteps } from "./LoadingState";
 import { ReviewContextMenu } from "./ReviewState";
 import type { ReviewContextTarget, ReviewContextHandler } from "./ReviewState";
@@ -57,6 +58,8 @@ export default function CodeWorkspace({
   saveScroll: (path: string, top: number, left: number) => void;
   loading: boolean;
 }) {
+  const [insightEditor, setInsightEditor] =
+    useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const focusEnabled = useRef(focusMode);
   focusEnabled.current = focusMode;
   const focusPath = useRef(review.selected);
@@ -806,6 +809,13 @@ export default function CodeWorkspace({
           >
             Prévia da definição <kbd>⌥F12</kbd>
           </button>
+          <CodeInsights
+            project={project}
+            editor={insightEditor}
+            currentEditor={() => handle.current?.editor}
+            review={review}
+            navigate={(loc) => navigate({ ...loc, mode: "code" })}
+          />
           <ReviewComments
             ref={comments}
             snapshot={snapshot}
@@ -889,6 +899,7 @@ export default function CodeWorkspace({
             }
             onReady={(h) => {
               handle.current = h;
+              setInsightEditor(h.editor);
               for (const editor of [
                 h.editor,
                 ...(h.diff ? [h.diff.getOriginalEditor()] : []),
