@@ -244,6 +244,7 @@ test.beforeEach(async ({ page }) => {
           return;
         }
         if (command === "open_pr") {
+          win.openPrCalls = (win.openPrCalls ?? 0) + 1;
           if (win.slowOpen) {
             args.onProgress.onmessage({
               step: "base",
@@ -544,6 +545,12 @@ test("preserves scroll, reviewed state and selection across files and reload", a
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
   await expect(page.getByText("Salvo neste dispositivo")).toBeVisible();
   await page.reload();
+  await expect(page.getByRole("button", { name: "Abrir PR" })).toBeEnabled();
+  await expect(page.getByLabel("URL da pull request")).toHaveValue("");
+  await expect(page.locator(".welcome")).toBeVisible();
+  await expect(page.locator(".code-workspace")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).openPrCalls ?? 0)).toBe(0);
+  await open(page);
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeChecked();
   // The scrollbar thumb rounds to physical pixels differently after layout.
   await expect
@@ -985,6 +992,7 @@ test("saves local comments, persists them and publishes only after apply all", a
     [],
   );
   await page.reload();
+  await open(page);
   await page
     .getByRole("button", { name: "Comentários (1)", exact: true })
     .click();
@@ -1342,6 +1350,7 @@ test("draft save failures preserve text and outdated drafts remain local", async
     localStorage.setItem("test-drafts", JSON.stringify(draft));
   });
   await page.reload();
+  await open(page);
   await page
     .getByRole("button", { name: "Comentários (1)", exact: true })
     .click();
@@ -1425,6 +1434,7 @@ test("approved unread stays distinct, persists and resets after a new push", asy
     0,
   );
   await page.reload();
+  await open(page);
   await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
   await expect(
     service.getByLabel("Aprovado sem ler", { exact: true }),

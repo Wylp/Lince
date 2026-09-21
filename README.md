@@ -21,7 +21,7 @@ gh auth status
 npm run tauri dev
 ```
 
-Cole uma URL `https://github.com/owner/repo/pull/123`. Selecione arquivos na árvore e marque Revisado. O app reabre a última PR e restaura seleção, posição e progresso. Abrir novamente a URL atual atualiza o snapshot. Um novo push invalida o progresso de forma conservadora; veja [decisões técnicas](docs/architecture.md).
+Cole uma URL `https://github.com/owner/repo/pull/123`. Selecione arquivos na árvore e marque Revisado. O app sempre inicia na home, com a URL vazia. Ao abrir uma PR pela URL ou pelo histórico, restaura seleção, posição e progresso. Abrir novamente a URL atual atualiza o snapshot. Um novo push invalida o progresso de forma conservadora; veja [decisões técnicas](docs/architecture.md).
 
 Ao abrir ou atualizar uma PR, um stepper mostra a consulta ao GitHub, preparação de base/head, organização da árvore e cálculo dos diffs. Cada etapa explica o trabalho em andamento e exibe o tempo decorrido. O editor, histórico, listagem e arquivos também têm indicadores próprios de carregamento.
 

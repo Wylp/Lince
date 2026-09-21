@@ -154,9 +154,7 @@ export default function App() {
       .then((saved) => {
         if (disposed) return;
         store.current = saved;
-        setUrl(saved.lastUrl);
         setReady(true);
-        if (saved.lastUrl) void open(saved.lastUrl);
       })
       .catch((err) => {
         if (!disposed) {
