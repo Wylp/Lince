@@ -2326,3 +2326,114 @@ progress::-webkit-progress-value {
 .review-context-menu button:disabled {
   opacity: 0.45;
 }
+
+.monaco-editor .comment-add-glyph {
+  opacity: 0;
+}
+.monaco-editor .comment-glyph-hover {
+  cursor: pointer;
+  background: #8de0ad;
+  border-radius: 3px;
+}
+.monaco-editor .comment-glyph-hover::before {
+  content: "+";
+  display: block;
+  text-align: center;
+  color: #10291a;
+  font: bold 18px/22px sans-serif;
+}
+.monaco-editor .comment-range-selection {
+  background: #ac87342b;
+}
+.monaco-editor .comment-range-edge {
+  border-left: 2px solid #a6e5b9;
+}
+.inline-comment-zone {
+  padding: 5px 10px 7px 0;
+  box-sizing: border-box;
+}
+.inline-comment-form {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 14px;
+  width: 100%;
+  color: #d3e6da;
+  background: #142019;
+  border: 1px solid #42664d;
+  border-left: 2px solid #a6e5b9;
+  border-radius: 6px;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+  white-space: normal;
+}
+.inline-comment-form h3 {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.inline-comment-form p {
+  margin: 4px 0 8px;
+}
+.inline-comment-form .comment-location {
+  font: 11px/1.5 monospace;
+  overflow-wrap: anywhere;
+}
+.inline-comment-form .muted {
+  font-size: 11px;
+  color: #a3b4a8;
+}
+.inline-comment-form label {
+  display: block;
+  font-size: 12px;
+}
+.inline-comment-form textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100px;
+  max-height: 220px;
+  resize: vertical;
+  margin-top: 5px;
+  padding: 9px;
+  background: #0c1510;
+  color: #e2ede5;
+  border: 1px solid #597763;
+  border-radius: 5px;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.inline-comment-form textarea:focus {
+  outline: 2px solid #a6e5b9;
+  outline-offset: -1px;
+}
+.inline-comment-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.inline-comment-form button {
+  padding: 6px 10px;
+  border: 1px solid #42664d;
+  background: #23392b;
+  border-radius: 5px;
+  color: #d3e6da;
+  font:
+    12px/1.5 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.inline-comment-form button.primary {
+  background: #a6e5b9;
+  color: #102718;
+}
+.inline-comment-form [role="alert"] {
+  color: #f1bc93;
+  overflow-wrap: anywhere;
+  max-height: 70px;
+  overflow: auto;
+}
+.monaco-editor .view-zones.comment-view-zones {
+  z-index: 5;
+}

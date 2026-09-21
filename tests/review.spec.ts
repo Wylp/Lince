@@ -953,9 +953,7 @@ test("saves local comments, persists them and publishes only after apply all", a
   page,
 }) => {
   await open(page);
-  await page
-    .getByRole("button", { name: "Comentar linha", exact: true })
-    .click();
+  await page.locator(".editor.modified .comment-add-glyph").first().click();
   await page
     .getByLabel("Comentário da revisão")
     .fill("Podemos simplificar esta função?");
@@ -995,8 +993,8 @@ test("saves local comments, persists them and publishes only after apply all", a
   await page.getByLabel("Ir ao arquivo", { exact: true }).fill("utils");
   await page.getByLabel("Ir ao arquivo", { exact: true }).press("Enter");
   await expect(
-    page.getByRole("button", { name: "Comentar linha", exact: true }),
-  ).toBeDisabled();
+    page.locator('[data-testid="source-editor"] .comment-add-glyph'),
+  ).toHaveCount(0);
 });
 
 test("base references stay on the base snapshot with tsconfig aliases", async ({
@@ -1185,12 +1183,16 @@ test("gutter click and drag compose single and multiline drafts on both sides", 
   await open(page);
   const right = page.locator(".editor.modified .comment-add-glyph");
   await right.nth(1).click();
-  await expect(page.getByRole("dialog")).toContainText("head · linha 2");
+  await expect(
+    page.getByRole("region", { name: "Comentário nas linhas selecionadas" }),
+  ).toContainText("head · linha 2");
   await page.getByLabel("Comentário da revisão").fill("Um comentário de linha");
   await page.getByRole("button", { name: "Salvar rascunho" }).click();
-  const left = page.locator(".editor.original .comment-add-glyph");
-  const first = await left.nth(3).boundingBox(),
-    last = await left.nth(5).boundingBox();
+  await expect(page.locator(".inline-comment-form")).toHaveCount(0);
+  const left = page.locator(".editor.original .line-numbers");
+  await left.filter({ hasText: /^4$/ }).hover();
+  const first = await left.filter({ hasText: /^4$/ }).boundingBox(),
+    last = await left.filter({ hasText: /^6$/ }).boundingBox();
   await page.mouse.move(
     first!.x + first!.width / 2,
     first!.y + first!.height / 2,
@@ -1200,10 +1202,19 @@ test("gutter click and drag compose single and multiline drafts on both sides", 
     steps: 8,
   });
   await page.mouse.up();
-  await expect(page.getByRole("dialog")).toContainText("base · linhas 4–6");
+  await expect(
+    page.getByRole("region", { name: "Comentário nas linhas selecionadas" }),
+  ).toContainText("base · linhas 4–6");
   await page
     .getByLabel("Comentário da revisão")
     .fill("Este trecho inteiro merece revisão");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.locator(".editor.original .inline-comment-form"),
+  ).toBeVisible();
+  await page.screenshot({
+    path: `test-results/inline-comment-${test.info().project.name}.png`,
+  });
   await page.getByRole("button", { name: "Salvar rascunho" }).click();
   expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
     [],
@@ -1239,9 +1250,7 @@ test("uncertain submissions are reconciled without posting a second batch", asyn
   page,
 }) => {
   await open(page);
-  await page
-    .getByRole("button", { name: "Comentar linha", exact: true })
-    .click();
+  await page.locator(".editor.modified .comment-add-glyph").first().click();
   await page
     .getByLabel("Comentário da revisão")
     .fill("Verificar erro de transporte");
@@ -1274,15 +1283,15 @@ test("draft save failures preserve text and outdated drafts remain local", async
   page,
 }) => {
   await open(page);
-  await page
-    .getByRole("button", { name: "Comentar linha", exact: true })
-    .click();
+  await page.locator(".editor.modified .comment-add-glyph").first().click();
   await page.getByLabel("Comentário da revisão").fill("Não perder este texto");
   await page.evaluate(() => {
     (window as any).draftSaveError = true;
   });
   await page.getByRole("button", { name: "Salvar rascunho" }).click();
-  await expect(page.getByRole("dialog")).toContainText("Disco indisponível");
+  await expect(
+    page.getByRole("region", { name: "Comentário nas linhas selecionadas" }),
+  ).toContainText("Disco indisponível");
   await expect(page.getByLabel("Comentário da revisão")).toHaveValue(
     "Não perder este texto",
   );
@@ -1300,9 +1309,7 @@ test("draft save failures preserve text and outdated drafts remain local", async
     page.getByRole("button", { name: "Aplicar tudo (0)", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Fechar comentários" }).click();
-  await page
-    .getByRole("button", { name: "Comentar linha", exact: true })
-    .click();
+  await page.locator(".editor.modified .comment-add-glyph").first().click();
   await page
     .getByLabel("Comentário da revisão")
     .fill("Rascunho de outra versão");
@@ -1432,4 +1439,50 @@ test("repository explorer shares folder review state and keeps unchanged files o
   await page.screenshot({
     path: `test-results/folder-state-${test.info().project.name}.png`,
   });
+});
+
+test("inline comments follow reverse selection, preserve text across files and cancel with Escape", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await open(page);
+  const editor = page.locator(".editor.modified");
+  const lines = editor.locator(".line-numbers");
+  await lines.filter({ hasText: /^9$/ }).hover();
+  await expect(editor.locator(".comment-glyph-hover")).toHaveCount(1);
+  const from = await lines.filter({ hasText: /^9$/ }).boundingBox();
+  const to = await lines.filter({ hasText: /^6$/ }).boundingBox();
+  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2, {
+    steps: 6,
+  });
+  await page.mouse.up();
+  const form = page.getByRole("region", {
+    name: "Comentário nas linhas selecionadas",
+  });
+  await expect(form).toContainText("head · linhas 6–9");
+  await expect(editor.locator(".inline-comment-form")).toBeVisible();
+  const lineBox = await lines.filter({ hasText: /^9$/ }).boundingBox();
+  const formBox = await form.boundingBox();
+  expect(formBox!.y).toBeGreaterThanOrEqual(lineBox!.y + lineBox!.height);
+  expect(formBox!.y - lineBox!.y - lineBox!.height).toBeLessThan(20);
+  await page.getByLabel("Comentário da revisão").fill("Texto ainda não salvo");
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await tree.getByRole("button", { name: /service.ts/ }).click();
+  await expect(form).toHaveCount(0);
+  await tree.getByRole("button", { name: /controller.ts/ }).click();
+  await expect(page.getByLabel("Comentário da revisão")).toHaveValue(
+    "Texto ainda não salvo",
+  );
+  await page.getByLabel("Comentário da revisão").press("Escape");
+  await expect(form).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Comentários (0)", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+  expect(errors).toEqual([]);
 });

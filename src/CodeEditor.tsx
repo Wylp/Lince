@@ -17,6 +17,8 @@ export function CodeEditor({
   commentable,
   onComment,
   draftRanges,
+  inlineTarget,
+  onCommentHost,
 }: {
   model: monaco.editor.ITextModel;
   original?: monaco.editor.ITextModel;
@@ -27,11 +29,27 @@ export function CodeEditor({
   column?: number;
   commentable?: CommentRanges;
   onComment?: (side: "LEFT" | "RIGHT", range: LineRange) => void;
+  inlineTarget?: ({ side: "LEFT" | "RIGHT" } & LineRange) | null;
+  onCommentHost?: (host: HTMLElement | null) => void;
   draftRanges?: { side: "LEFT" | "RIGHT"; startLine: number; line: number }[];
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onScroll, onReady, onComment, commentable });
-  callbacks.current = { onScroll, onReady, onComment, commentable };
+  const callbacks = useRef({
+    onScroll,
+    onReady,
+    onComment,
+    commentable,
+    inlineTarget,
+    onCommentHost,
+  });
+  callbacks.current = {
+    onScroll,
+    onReady,
+    onComment,
+    commentable,
+    inlineTarget,
+    onCommentHost,
+  };
   const editors = useRef<
     { editor: monaco.editor.IStandaloneCodeEditor; side: "LEFT" | "RIGHT" }[]
   >([]);
@@ -78,7 +96,8 @@ export function CodeEditor({
       if (restoring) restore();
     });
     const scroll = editor.onDidScrollChange((e) => {
-      if (!restoring) callbacks.current.onScroll?.(e.scrollTop, e.scrollLeft);
+      if (!restoring && !callbacks.current.inlineTarget)
+        callbacks.current.onScroll?.(e.scrollTop, e.scrollLeft);
     });
     let focused = editor;
     const focusListeners = [
@@ -120,59 +139,87 @@ export function CodeEditor({
             })),
           ),
         );
-        let drag: { start: number; end: number } | null = null;
+        let drag: { start: number; end: number; hunk: LineRange } | null = null;
+        const hover = ed.createDecorationsCollection();
+        marginDecorations.push(hover);
         const selection = ed.createDecorationsCollection();
         marginDecorations.push(selection);
-        commentListeners.push(
-          ed.onMouseDown((e) => {
-            if (
-              e.target.type !==
-                monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
-              !e.event.leftButton ||
-              !e.target.position ||
-              !allowed(e.target.position.lineNumber)
-            )
-              return;
-            e.event.preventDefault();
-            ed.focus();
-            const line = e.target.position.lineNumber;
-            const selected = ed.getSelection();
-            const range = selected
-              ? selectedLines(selected)
-              : { startLine: line, line };
-            drag =
-              range.startLine !== range.line &&
-              line >= range.startLine &&
-              line <= range.line
-                ? { start: range.startLine, end: range.line }
-                : { start: line, end: line };
-            selection.set([
-              {
-                range: new monaco.Range(drag.start, 1, drag.end, 1),
-                options: {
-                  isWholeLine: true,
-                  className: "comment-range-selection",
-                },
+        const paint = () => {
+          if (!drag) return;
+          selection.set([
+            {
+              range: new monaco.Range(
+                Math.min(drag.start, drag.end),
+                1,
+                Math.max(drag.start, drag.end),
+                1,
+              ),
+              options: {
+                isWholeLine: true,
+                className: "comment-range-selection",
               },
-            ]);
+            },
+          ]);
+        };
+        const down = (event: MouseEvent) => {
+          const target = ed.getTargetAtClientPoint(
+            event.clientX,
+            event.clientY,
+          );
+          if (
+            !target?.position ||
+            event.button !== 0 ||
+            !allowed(target.position.lineNumber) ||
+            ![
+              monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+              monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+            ].includes(target.type)
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          ed.focus();
+          const n = target.position.lineNumber;
+          const hunk = callbacks.current.commentable![side].find(
+            (r) => n >= r.startLine && n <= r.line,
+          )!;
+          drag = { start: n, end: n, hunk };
+          paint();
+        };
+        const move = (event: MouseEvent) => {
+          if (!drag) return;
+          const n = ed.getTargetAtClientPoint(event.clientX, event.clientY)
+            ?.position?.lineNumber;
+          if (!n) return;
+          drag.end = Math.max(drag.hunk.startLine, Math.min(n, drag.hunk.line));
+          paint();
+        };
+        const dom = ed.getDomNode()!;
+        dom.addEventListener("mousedown", down, true);
+        window.addEventListener("mousemove", move, true);
+        releaseHandlers.push(() => {
+          dom.removeEventListener("mousedown", down, true);
+          window.removeEventListener("mousemove", move, true);
+        });
+        commentListeners.push(
+          ed.onMouseLeave(() => {
+            if (!drag) hover.clear();
           }),
           ed.onMouseMove((e) => {
-            if (!drag || !e.target.position) return;
-            drag.end = e.target.position.lineNumber;
-            selection.set([
-              {
-                range: new monaco.Range(
-                  Math.min(drag.start, drag.end),
-                  1,
-                  Math.max(drag.start, drag.end),
-                  1,
-                ),
-                options: {
-                  isWholeLine: true,
-                  className: "comment-range-selection",
-                },
-              },
-            ]);
+            const n = e.target.position?.lineNumber;
+            hover.set(
+              n && allowed(n)
+                ? [
+                    {
+                      range: new monaco.Range(n, 1, n, 1),
+                      options: {
+                        glyphMarginClassName: "comment-glyph-hover",
+                        isWholeLine: true,
+                      },
+                    },
+                  ]
+                : [],
+            );
           }),
         );
         const release = () => {
@@ -223,6 +270,73 @@ export function CodeEditor({
       diff ? diff.dispose() : editor.dispose();
     };
   }, [model, original, line, column]);
+  useEffect(() => {
+    if (!inlineTarget) return;
+    const ed = editors.current.find(
+      (entry) => entry.side === inlineTarget.side,
+    )?.editor;
+    if (!ed) return;
+    const previousTop = ed.getScrollTop();
+    const node = document.createElement("div");
+    node.className = "inline-comment-zone";
+    const slot = document.createElement("div");
+    node.appendChild(slot);
+    const zone: monaco.editor.IViewZone = {
+      afterLineNumber: inlineTarget.line,
+      heightInPx: 280,
+      domNode: node,
+      suppressMouseDown: false,
+    };
+    let id = "";
+    ed.changeViewZones((accessor) => {
+      id = accessor.addZone(zone);
+    });
+    // Monaco hides decorative view zones from assistive technology by default.
+    // This zone contains an interactive form and must remain accessible.
+    const container = node.parentElement;
+    const hidden = container?.getAttribute("aria-hidden");
+    container?.removeAttribute("aria-hidden");
+    container?.classList.add("comment-view-zones");
+    const highlight = ed.createDecorationsCollection([
+      {
+        range: new monaco.Range(
+          inlineTarget.startLine,
+          1,
+          inlineTarget.line,
+          1,
+        ),
+        options: {
+          isWholeLine: true,
+          className: "comment-range-selection",
+          linesDecorationsClassName: "comment-range-edge",
+        },
+      },
+    ]);
+    const observer = new ResizeObserver(() => {
+      const height = Math.ceil(slot.getBoundingClientRect().height) + 12;
+      if (height > 12 && height !== zone.heightInPx) {
+        zone.heightInPx = height;
+        ed.changeViewZones((accessor) => accessor.layoutZone(id));
+      }
+    });
+    observer.observe(slot);
+    callbacks.current.onCommentHost?.(slot);
+    const frame = requestAnimationFrame(() => {
+      ed.setScrollTop(
+        Math.max(0, ed.getTopForLineNumber(inlineTarget.line) - 100),
+      );
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      highlight.clear();
+      ed.changeViewZones((accessor) => accessor.removeZone(id));
+      ed.setScrollTop(previousTop, monaco.editor.ScrollType.Immediate);
+      container?.classList.remove("comment-view-zones");
+      if (hidden != null) container?.setAttribute("aria-hidden", hidden);
+      callbacks.current.onCommentHost?.(null);
+    };
+  }, [inlineTarget, model, original, line, column]);
   useEffect(() => {
     draftDecorations.current.forEach((d) => d.clear());
     draftDecorations.current = editors.current.map(({ editor, side }) =>

@@ -64,7 +64,7 @@ Código, inclusive de repositórios privados, **permanece no cache em disco**. A
 
 ## Comentários
 
-Clique no **+** ao lado de uma linha ou arraste o + para selecionar várias linhas. Também é possível selecionar texto e usar **Comentar linha**, o menu de contexto ou Cmd/Ctrl+Alt+M. Funciona na base e no head; cada comentário deve ficar dentro de um único hunk e lado do diff.
+Passe o mouse sobre uma linha para revelar o **+**, clique nele ou arraste pela margem/números para selecionar várias linhas. Ao soltar, o formulário abre dentro do diff, abaixo da última linha selecionada, mantendo o intervalo destacado. Também é possível selecionar texto e usar o menu de contexto ou Cmd/Ctrl+Alt+M. Funciona na base e no head; o arraste fica limitado ao mesmo hunk e lado do diff. Esc ou Cancelar fecha o formulário.
 
 **Salvar rascunho** grava o comentário no SQLite sem fazer escrita no GitHub. Em **Comentários (N)**, confira, edite ou remova os rascunhos. Somente **Aplicar tudo (N)** publica todos de uma vez como uma revisão `COMMENT`, sem aprovar nem solicitar alterações. Texto no formulário ainda não salvo não persiste ao fechar. Limites locais: 50 comentários por lote, 256 KiB de texto total e 16.000 caracteres por formulário.
 

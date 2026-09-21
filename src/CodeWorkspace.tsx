@@ -3,9 +3,13 @@ import type { ReviewContextTarget, ReviewContextHandler } from "./ReviewState";
 import { isResolved, folderSummaries } from "./model";
 import type { ReviewDecision } from "./model";
 import { ReviewComments } from "./ReviewComments";
-import type { CommentsHandle, DraftComment } from "./ReviewComments";
-import { commentRanges, selectedLines } from "./comment-lines";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  CommentsHandle,
+  DraftComment,
+  CommentTarget,
+} from "./ReviewComments";
+import { commentRanges } from "./comment-lines";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   monaco,
@@ -86,6 +90,16 @@ export default function CodeWorkspace({
     [message, setMessage] = useState("");
   const comments = useRef<CommentsHandle>(null);
   const [drafts, setDrafts] = useState<DraftComment[]>([]);
+  const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(
+    null,
+  );
+  const [commentHost, setCommentHost] = useState<HTMLElement | null>(null);
+  const openComment = useCallback((target: CommentTarget | null) => {
+    setCommentTarget(target);
+    if (target)
+      navigateRef.current({ path: target.path, side: "head", mode: "diff" });
+  }, []);
+
   const [peek, setPeek] = useState<monaco.languages.Location[]>([]),
     [peekIndex, setPeekIndex] = useState(0),
     [quick, setQuick] = useState(false),
@@ -630,29 +644,12 @@ export default function CodeWorkspace({
           >
             Prévia da definição <kbd>⌥F12</kbd>
           </button>
-          <button
-            disabled={!currentFile || !loaded?.diff.reviewable}
-            onClick={() => {
-              const h = handle.current;
-              if (!h) return;
-              const old = h.diff?.getOriginalEditor();
-              const ed = old?.hasTextFocus() ? old : h.editor;
-              const range = ed.getSelection()
-                ? selectedLines(ed.getSelection()!)
-                : { startLine: 1, line: 1 };
-              comments.current?.compose({
-                path: currentFile!.path,
-                side: ed === old || tab.side === "base" ? "LEFT" : "RIGHT",
-                ...range,
-              });
-            }}
-          >
-            Comentar linha
-          </button>
           <ReviewComments
             ref={comments}
             snapshot={snapshot}
             onChange={setDrafts}
+            host={commentHost}
+            onTarget={openComment}
           />
           <button
             disabled={!semanticLanguage(language(tab.path))}
@@ -700,6 +697,12 @@ export default function CodeWorkspace({
                 ? commentRanges(loaded?.diff.patch)
                 : undefined
             }
+            inlineTarget={
+              tab.mode === "diff" && commentTarget?.path === tab.path
+                ? commentTarget
+                : null
+            }
+            onCommentHost={setCommentHost}
             draftRanges={
               tab.mode === "diff"
                 ? drafts.filter((d) => d.path === tab.path)

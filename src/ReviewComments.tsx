@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import {
   forwardRef,
   useEffect,
@@ -38,8 +39,13 @@ const empty: Draft = {
 };
 export const ReviewComments = forwardRef<
   CommentsHandle,
-  { snapshot: Snapshot; onChange: (comments: DraftComment[]) => void }
->(function ReviewComments({ snapshot, onChange }, ref) {
+  {
+    snapshot: Snapshot;
+    onChange: (comments: DraftComment[]) => void;
+    host: HTMLElement | null;
+    onTarget: (target: CommentTarget | null) => void;
+  }
+>(function ReviewComments({ snapshot, onChange, host, onTarget }, ref) {
   const [draft, setDraft] = useState<Draft>(empty),
     [loaded, setLoaded] = useState(false),
     [busy, setBusy] = useState(false),
@@ -50,8 +56,7 @@ export const ReviewComments = forwardRef<
     [editing, setEditing] = useState<string | null>(null),
     [listOpen, setListOpen] = useState(false),
     [confirmedAbsent, setConfirmedAbsent] = useState(false);
-  const form = useRef<HTMLDialogElement>(null),
-    list = useRef<HTMLDialogElement>(null);
+  const list = useRef<HTMLDialogElement>(null);
   const stale = draft.comments.length > 0 && draft.snapshotId !== snapshot.id;
   const locked = draft.state !== "ready";
   const update = (value: Draft) => {
@@ -82,14 +87,21 @@ export const ReviewComments = forwardRef<
     };
   }, [snapshot.id]);
   useEffect(() => {
-    if (target) form.current?.showModal();
-  }, [target]);
+    onTarget(target);
+  }, [target, onTarget]);
   useEffect(() => {
     if (listOpen) list.current?.showModal();
   }, [listOpen]);
   useImperativeHandle(ref, () => ({
     compose: (value) => {
       if (busy) return;
+      if (target && body.trim()) {
+        setError(
+          "Salve ou cancele este rascunho antes de comentar outro trecho.",
+        );
+        onTarget(target);
+        return;
+      }
       if (!loaded || stale || locked) {
         setListOpen(true);
         return;
@@ -137,64 +149,67 @@ export const ReviewComments = forwardRef<
         Comentários ({draft.comments.length})
         {error && !listOpen && !target ? " !" : ""}
       </button>
-      {target && (
-        <dialog
-          className="comment-dialog review-drafts"
-          ref={form}
-          onCancel={(e) => {
-            if (busy) e.preventDefault();
-            else setTarget(null);
-          }}
-        >
-          <h3>{editing ? "Editar rascunho" : "Novo comentário"}</h3>
-          <p className="comment-location">{location(target)}</p>
-          <p className="muted">
-            Ao salvar, o rascunho fica neste dispositivo. Nada será enviado até
-            você clicar em Aplicar tudo.
-          </p>
-          <label>
-            Comentário
-            <textarea
-              autoFocus
-              aria-label="Comentário da revisão"
-              value={body}
-              disabled={busy}
-              onChange={(e) => setBody(e.target.value)}
-              maxLength={16000}
-            />
-          </label>
-          {error && <p role="alert">{error}</p>}
-          <footer>
-            <button disabled={busy} onClick={() => setTarget(null)}>
-              Cancelar
-            </button>
-            <button
-              className="primary"
-              disabled={busy || !body.trim()}
-              onClick={() =>
-                void run(async () => {
-                  const comment = {
-                    ...target,
-                    body,
-                    id: editing ?? crypto.randomUUID(),
-                  };
-                  await save(
-                    editing
-                      ? draft.comments.map((c) =>
-                          c.id === editing ? comment : c,
-                        )
-                      : [...draft.comments, comment],
-                  );
-                  setTarget(null);
-                  setBody("");
-                })
-              }
-            >
-              {busy ? "Salvando…" : "Salvar rascunho"}
-            </button>
-          </footer>
-        </dialog>
-      )}
+      {target &&
+        host &&
+        createPortal(
+          <section
+            className="inline-comment-form"
+            aria-label="Comentário nas linhas selecionadas"
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape" && !busy) setTarget(null);
+            }}
+          >
+            <h3>{editing ? "Editar rascunho" : "Novo comentário"}</h3>
+            <p className="comment-location">{location(target)}</p>
+            <p className="muted">
+              Ao salvar, o rascunho fica neste dispositivo. Nada será enviado
+              até você clicar em Aplicar tudo.
+            </p>
+            <label>
+              Comentário
+              <textarea
+                autoFocus
+                aria-label="Comentário da revisão"
+                value={body}
+                disabled={busy}
+                onChange={(e) => setBody(e.target.value)}
+                maxLength={16000}
+              />
+            </label>
+            {error && <p role="alert">{error}</p>}
+            <footer>
+              <button disabled={busy} onClick={() => setTarget(null)}>
+                Cancelar
+              </button>
+              <button
+                className="primary"
+                disabled={busy || !body.trim()}
+                onClick={() =>
+                  void run(async () => {
+                    const comment = {
+                      ...target,
+                      body,
+                      id: editing ?? crypto.randomUUID(),
+                    };
+                    await save(
+                      editing
+                        ? draft.comments.map((c) =>
+                            c.id === editing ? comment : c,
+                          )
+                        : [...draft.comments, comment],
+                    );
+                    setTarget(null);
+                    setBody("");
+                  })
+                }
+              >
+                {busy ? "Salvando…" : "Salvar rascunho"}
+              </button>
+            </footer>
+          </section>,
+          host,
+        )}
       {listOpen && (
         <dialog
           className="review-drafts draft-list-dialog"
@@ -237,7 +252,7 @@ export const ReviewComments = forwardRef<
             <p>
               {draft.lastUrl
                 ? "Todos os comentários foram enviados ao GitHub."
-                : "Nenhum comentário pendente. Use o + ao lado de uma linha, arraste para selecionar várias ou selecione texto e use Comentar linha."}
+                : "Nenhum comentário pendente. Use o + ao lado de uma linha, arraste para selecionar várias ou use o menu de contexto da seleção."}
             </p>
           )}
           <div className="draft-comment-list">

@@ -1,5 +1,12 @@
 # Validação
 
+## Comentários dentro do diff — 21/09/2026
+
+- 52 cenários Playwright passaram no build de produção em Chromium e WebKit. Comentários abrem em view zones do Monaco, no lado selecionado e abaixo do intervalo; nenhum modal de composição nem botão separado na barra.
+- Os testes cobrem clique no +, arraste pelos números nos dois sentidos, posicionamento do formulário, ausência de modal, edição local, preservação do texto ao trocar de arquivo, Escape, falhas e publicação apenas em Aplicar tudo. Eventos nativos de arraste evitam conflito com a seleção do Monaco; a zona interativa expõe seu formulário à árvore de acessibilidade. Screenshot do formulário inline inspecionado.
+- Build de produção, build Tauri macOS arm64 (`--debug --no-bundle`), 13 testes Vitest e Prettier passaram. O backend e o formato SQLite não mudaram. Nenhum comentário real foi publicado; integração GitHub simulada na UI.
+- Windows/Linux nativos e interação no WebView nativo permanecem sem validação local.
+
 ## Menus de contexto e decisões de leitura — 18/09/2026
 
 - 50 cenários Playwright passaram no build de produção em Chromium e WebKit, incluindo o fluxo de comentários em lote. Os novos testes cobrem marcação por arquivo/pasta, filtros, árvores de alterações/repositório, atalho Shift+F10, distinção de aprovado sem ler, persistência e invalidação após novo push.
