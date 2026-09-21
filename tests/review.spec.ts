@@ -244,6 +244,23 @@ test.beforeEach(async ({ page }) => {
           return;
         }
         if (command === "open_pr") {
+          if (win.slowOpen) {
+            args.onProgress.onmessage({
+              step: "base",
+              detail: "Baixando a versão original para o cache local.",
+            });
+            await new Promise<void>((resolve) => {
+              win.continueOpen = resolve;
+            });
+            args.onProgress.onmessage({
+              step: "diff",
+              detail: "Comparando arquivos: 25 de 153 preparados.",
+            });
+            await new Promise<void>((resolve) => {
+              win.finishOpen = resolve;
+            });
+            if (win.failOpening) throw "GitHub indisponível durante a abertura";
+          }
           if (args.url.includes("error")) throw "Sem acesso à PR";
           if (win.newPush)
             return {
@@ -317,6 +334,11 @@ test.beforeEach(async ({ page }) => {
             warnings: ["Índice de declarações parcial: fixture"],
             indexedFiles: 3,
           };
+        }
+        if (command === "get_repository_index" && win.slowEditor) {
+          await new Promise<void>((resolve) => {
+            win.finishEditor = resolve;
+          });
         }
         if (command === "get_repository_index")
           return {
@@ -1485,4 +1507,67 @@ test("inline comments follow reverse selection, preserve text across files and c
     [],
   );
   expect(errors).toEqual([]);
+});
+
+test("loading steps follow backend progress and continue into editor preparation", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).slowOpen = true;
+    (window as any).slowEditor = true;
+  });
+  await page
+    .getByLabel("URL da pull request")
+    .fill("https://github.com/acme/project/pull/42");
+  await page.getByRole("button", { name: "Abrir PR" }).click();
+  const loading = page.getByRole("region", { name: "Preparando sua revisão" });
+  await expect(loading).toBeVisible();
+  await expect(loading.locator('[aria-current="step"]')).toContainText(
+    "Preparar a versão original",
+  );
+  await expect(loading).toContainText("Baixando a versão original");
+  await expect(loading.locator(".complete")).toHaveCount(2);
+  await page.evaluate(() => (window as any).continueOpen());
+  await expect(loading.locator('[aria-current="step"]')).toContainText(
+    "Calcular as alterações",
+  );
+  await expect(loading).toContainText("25 de 153");
+  await page.screenshot({
+    path: `test-results/loading-steps-${test.info().project.name}.png`,
+  });
+  await page.evaluate(() => (window as any).finishOpen());
+  const editor = page.getByRole("region", { name: "Preparando o editor" });
+  await expect(editor).toBeVisible();
+  await expect(editor).toContainText("Carregar o espaço de revisão");
+  await page.evaluate(() => (window as any).finishEditor());
+  await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
+  await expect(page.locator(".loading-state")).toHaveCount(0);
+});
+
+test("failed loading clears the stepper and permits retry", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).slowOpen = true;
+    (window as any).failOpening = true;
+  });
+  await page
+    .getByLabel("URL da pull request")
+    .fill("https://github.com/acme/project/pull/42");
+  await page.getByRole("button", { name: "Abrir PR" }).click();
+  await expect(
+    page.getByRole("region", { name: "Preparando sua revisão" }),
+  ).toBeVisible();
+  await page.evaluate(() => (window as any).continueOpen());
+  await expect(
+    page.locator('.loading-steps [aria-current="step"]'),
+  ).toContainText("Calcular as alterações");
+  await page.evaluate(() => (window as any).finishOpen());
+  await expect(page.locator(".loading-overlay")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText("GitHub indisponível");
+  await page.evaluate(() => {
+    (window as any).slowOpen = false;
+  });
+  await page.getByRole("button", { name: "Abrir PR" }).click();
+  await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
 });

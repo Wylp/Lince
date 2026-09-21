@@ -40,3 +40,9 @@ Conteúdo privado usa as permissões do gh. Expiração, rate limit, SSO e falta
 ## Descoberta de gh
 
 `LINCE_GH` (caminho absoluto definido pelo usuário), depois `PATH`, depois locais comuns: Homebrew em Apple Silicon/Intel, `/usr/bin`, `ProgramFiles/GitHub CLI` e `LOCALAPPDATA/Programs/GitHub CLI`. Não abrimos shell de login e não lemos tokens. Instalações fora desses locais devem usar `LINCE_GH` ou iniciar o app num terminal cujo PATH encontre `gh`.
+
+## Progresso de carregamento
+
+`open_pr` recebe um `Channel<LoadingProgress>` do Tauri, exclusivo da chamada. O backend informa as etapas reais `github`, `base`, `head`, `tree` e `diff`; durante o cálculo, relata a quantidade de arquivos preparados a cada 25 arquivos. Hits de cache informam a reutilização da revisão. A etapa inicial de salvar progresso ocorre no frontend antes da consulta. O canal não altera autenticação, cache nem checkout.
+
+A interface ignora etapas atrasadas e mensagens recebidas após encerrar a chamada. Não há porcentagem ou avanço por temporizador: o relógio indica somente o tempo decorrido. Preparação do editor tem etapas próprias de recebimento dos dados e inicialização; histórico, catálogo, PRs, arquivo de contexto e prévia de definição usam mensagens específicas. Erros encerram o loading e preservam os fluxos existentes de tentativa. A prévia ignora respostas de uma consulta anterior quando o usuário navega para outro arquivo.

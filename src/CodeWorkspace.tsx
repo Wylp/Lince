@@ -1,3 +1,4 @@
+import { LoadingState, editorLoadingSteps } from "./LoadingState";
 import { ReviewContextMenu } from "./ReviewState";
 import type { ReviewContextTarget, ReviewContextHandler } from "./ReviewState";
 import { isResolved, folderSummaries } from "./model";
@@ -72,6 +73,9 @@ export default function CodeWorkspace({
       source: event.currentTarget as HTMLElement,
     });
   };
+  const [preparingStep, setPreparingStep] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewRequest = useRef(0);
   const [bundle, setBundle] = useState<Bundle | null>(null),
     [project, setProject] = useState<Project | null>(null),
     [error, setError] = useState(""),
@@ -117,6 +121,8 @@ export default function CodeWorkspace({
   const dialog = useRef<HTMLDialogElement>(null),
     finder = useRef<HTMLDialogElement>(null);
   function navigate(next: Tab, record = true) {
+    previewRequest.current++;
+    setPreviewLoading(false);
     setTab(next);
     setDoc(null);
     setMessage("");
@@ -137,6 +143,7 @@ export default function CodeWorkspace({
     let stale = false;
     let instance: Project | null = null;
     setError("");
+    setPreparingStep(0);
     void Promise.all([
       invoke<Bundle>("get_pr_files", { snapshotId: snapshot.id }),
       invoke<RepoIndex>("get_repository_index", { snapshotId: snapshot.id }),
@@ -146,6 +153,7 @@ export default function CodeWorkspace({
         instance = new Project(snapshot.id, index, (message) => {
           if (!stale) setMessage(message);
         });
+        setPreparingStep(1);
         await instance.initialize();
         if (stale) {
           instance.dispose();
@@ -253,11 +261,14 @@ export default function CodeWorkspace({
   }
   async function preview(editor: monaco.editor.IStandaloneCodeEditor) {
     if (!project || !editor.getModel() || !editor.getPosition()) return;
+    const request = ++previewRequest.current;
+    setPreviewLoading(true);
     try {
       const matches = await project.definitions(
         editor.getModel()!,
         editor.getPosition()!,
       );
+      if (request !== previewRequest.current) return;
       if (matches.length) {
         setPeek(matches);
         setPeekIndex(0);
@@ -267,7 +278,9 @@ export default function CodeWorkspace({
         );
       }
     } catch (e) {
-      setMessage(String(e));
+      if (request === previewRequest.current) setMessage(String(e));
+    } finally {
+      if (request === previewRequest.current) setPreviewLoading(false);
     }
   }
   previewRef.current = (editor) => {
@@ -342,9 +355,12 @@ export default function CodeWorkspace({
     );
   if (!project || !bundle)
     return (
-      <div className="notice" role="status">
-        <span className="spinner" />
-        <p>Preparando editor e índice de referências…</p>
+      <div className="workspace-loading">
+        <LoadingState
+          title="Preparando o editor"
+          steps={editorLoadingSteps}
+          active={preparingStep}
+        />
       </div>
     );
   return (
@@ -668,6 +684,13 @@ export default function CodeWorkspace({
             {w}
           </div>
         ))}
+        {previewLoading && (
+          <LoadingState
+            compact
+            title="Buscando definição"
+            detail="Consultando o código e as dependências necessárias para abrir a prévia."
+          />
+        )}
         {message && (
           <div className="metadata-note" role="status">
             {message}
@@ -735,13 +758,16 @@ export default function CodeWorkspace({
               }
             }}
           />
+        ) : tab.mode === "code" && !doc ? (
+          <div className="workspace-loading">
+            <LoadingState
+              title="Carregando arquivo"
+              detail={`Lendo ${tab.path} na cópia local do repositório.`}
+            />
+          </div>
         ) : (
           <div className="notice">
-            <h3>
-              {tab.mode === "code" && !doc
-                ? "Carregando arquivo local…"
-                : "Arquivo indisponível"}
-            </h3>
+            <h3>Arquivo indisponível</h3>
             <p>{tab.mode === "diff" ? loaded?.diff.reason : doc?.reason}</p>
           </div>
         )}

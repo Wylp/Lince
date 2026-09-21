@@ -1,5 +1,11 @@
 # Validação
 
+## Carregamento com etapas e explicações — 21/09/2026
+
+- 56 cenários Playwright passaram em Chromium/WebKit sobre o build de produção. Novos cenários pausam a abertura para verificar a etapa enviada pelo backend, contagem de arquivos, transição para preparação do editor, remoção do loading após falha e nova tentativa. Screenshot do stepper inspecionado.
+- 26 testes Rust passaram (2 de rede ignorados), incluindo a sequência de etapas emitida durante a preparação de um repositório Git temporário. Os 13 testes Vitest, Clippy com `-D warnings`, Prettier e build de produção passaram.
+- Build Tauri macOS arm64 (`--debug --no-bundle`) passou com o Channel de progresso. Os testes de interface simulam IPC; a interação no WebView nativo e builds Windows/Linux permanecem sem validação local. Não foram feitas alterações em PRs reais.
+
 ## Comentários dentro do diff — 21/09/2026
 
 - 52 cenários Playwright passaram no build de produção em Chromium e WebKit. Comentários abrem em view zones do Monaco, no lado selecionado e abaixo do intervalo; nenhum modal de composição nem botão separado na barra.

@@ -1,3 +1,4 @@
+import { LoadingState, prLoadingSteps } from "./LoadingState";
 import { useNotifications } from "./notifications";
 import { ReviewHistory } from "./ReviewHistory";
 import {
@@ -8,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace"));
 import { AuthStatus, useGhAuth } from "./AuthStatus";
@@ -28,6 +29,8 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [review, setReview] = useState<ReviewProgress | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState({ active: 0, detail: "" });
+  const opening = useRef(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -100,12 +103,28 @@ export default function App() {
       );
       return;
     }
+    if (opening.current) return;
+    opening.current = true;
+    setLoadProgress({ active: 0, detail: "" });
     setLoading(true);
     setError("");
     setInfo("");
+    let current = true;
+    const channel = new Channel<{ step: string; detail: string }>((event) => {
+      if (!current) return;
+      const index = prLoadingSteps.findIndex((step) => step.id === event.step);
+      if (index >= 0)
+        setLoadProgress((old) =>
+          index >= old.active ? { active: index, detail: event.detail } : old,
+        );
+    });
     try {
       await flush();
-      const next = await invoke<Snapshot>("open_pr", { url: input });
+      setLoadProgress({ active: 1, detail: "" });
+      const next = await invoke<Snapshot>("open_pr", {
+        url: input,
+        onProgress: channel,
+      });
       const restored = reconcile(next, store.current.reviews[next.key]);
       active.current = { snapshot: next, review: restored.review };
       setSnapshot(next);
@@ -120,6 +139,8 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
+      current = false;
+      opening.current = false;
       setLoading(false);
     }
   }
@@ -318,6 +339,20 @@ export default function App() {
           {info}
         </div>
       )}
+      {(!ready || loading) && (
+        <div className="loading-overlay">
+          <LoadingState
+            title={!ready ? "Abrindo o Lince" : "Preparando sua revisão"}
+            steps={ready ? prLoadingSteps : undefined}
+            active={loadProgress.active}
+            detail={
+              !ready
+                ? "Restaurando suas preferências e o progresso salvo neste dispositivo."
+                : loadProgress.detail
+            }
+          />
+        </div>
+      )}
       {historyOpen ? (
         <ReviewHistory
           open={(input) => {
@@ -390,8 +425,11 @@ export default function App() {
           </section>
           <Suspense
             fallback={
-              <div className="notice" role="status">
-                Carregando editor…
+              <div className="workspace-loading">
+                <LoadingState
+                  title="Abrindo o editor"
+                  detail="Carregando as ferramentas de leitura e navegação do código."
+                />
               </div>
             }
           >
@@ -465,11 +503,6 @@ export default function App() {
             <span>✓ Progresso salvo</span>
           </div>
           <AuthStatus auth={auth} refresh={refreshAuth} />
-          {loading && (
-            <p role="status">
-              Sincronizando a cópia local da PR e preparando os arquivos…
-            </p>
-          )}
         </main>
       )}
     </div>

@@ -1,3 +1,4 @@
+import { LoadingState } from "./LoadingState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { SearchSelect } from "./SearchSelect";
@@ -388,9 +389,11 @@ function RepoGroup({
         <p className="repo-empty">Nenhuma PR aberta neste repositório.</p>
       )}
       {loading && (
-        <p className="repo-empty" role="status">
-          Carregando PRs…
-        </p>
+        <LoadingState
+          compact
+          title="Carregando PRs"
+          detail="Buscando as pull requests abertas deste repositório no GitHub."
+        />
       )}
       {error && (
         <div className="inline-error" role="alert">
@@ -621,6 +624,13 @@ export function PrBrowser({
         </span>
         <span>Proprietário, colaborador ou membro da organização</span>
       </div>
+      {catalogLoading && (
+        <LoadingState
+          compact
+          title="Buscando repositórios"
+          detail={`${repos.length} encontrados. Consultando os repositórios em que você participa; os resultados aparecem conforme chegam.`}
+        />
+      )}
       <div className="browser-results">
         {error && (
           <div className="banner error" role="alert">

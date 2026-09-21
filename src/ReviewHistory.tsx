@@ -1,3 +1,4 @@
+import { LoadingState } from "./LoadingState";
 import { useEffect, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Avatar } from "./Avatar";
@@ -98,7 +99,11 @@ export function ReviewHistory({
       </div>
       <div className="browser-results">
         {loading ? (
-          <p role="status">Carregando histórico…</p>
+          <LoadingState
+            compact
+            title="Carregando histórico"
+            detail="Consultando suas revisões e decisões salvas neste dispositivo."
+          />
         ) : error ? (
           <div className="banner error" role="alert">
             {error}

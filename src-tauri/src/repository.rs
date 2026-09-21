@@ -267,7 +267,15 @@ pub async fn read(repo: &Repository, side: &str, path: &str) -> Result<Document,
     let contents = blobs(&repo.path, vec![entry]).await?;
     Ok(document(entry, side, &contents))
 }
+#[cfg(test)]
 pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repository), String> {
+    prepare_with_progress(snapshot, root, &|_, _| {}).await
+}
+pub async fn prepare_with_progress(
+    snapshot: Snapshot,
+    root: &Path,
+    report: &(dyn Fn(&str, &str) + Send + Sync),
+) -> Result<(LoadedPr, Repository), String> {
     let path = root.join(format!(
         "{:x}.git",
         Sha256::digest(snapshot.repo.as_bytes())
@@ -286,12 +294,28 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
             .replace('\'', "'\\''")
     );
     for (name, sha) in [("base", &snapshot.merge_base), ("head", &snapshot.head_sha)] {
+        report(
+            name,
+            if name == "base" {
+                "Conferindo a versão original no cache local."
+            } else {
+                "Conferindo a versão da PR no cache local."
+            },
+        );
         if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("SHA da revisão inválido".into());
         }
         let mut check = git(&path);
         check.args(["cat-file", "-e", &format!("{sha}^{{commit}}")]);
         if run(check, vec![], 1024).await.is_err() {
+            report(
+                name,
+                if name == "base" {
+                    "Baixando a versão original. A primeira abertura pode levar mais tempo."
+                } else {
+                    "Baixando a versão da PR para navegar no código completo."
+                },
+            );
             let mut c = git(&path);
             c.args([
                 "-c",
@@ -309,6 +333,10 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
             run(c, vec![], 1024 * 1024).await?;
         }
     }
+    report(
+        "tree",
+        "Montando a árvore de arquivos das duas versões do repositório.",
+    );
     let base = tree(&path, &snapshot.merge_base).await?;
     let head = tree(&path, &snapshot.head_sha).await?;
     let base_map = base
@@ -345,11 +373,25 @@ pub async fn prepare(snapshot: Snapshot, root: &Path) -> Result<(LoadedPr, Repos
     {
         return Err("Conteúdo antes/depois dos arquivos alterados excede 64 MiB.".into());
     }
+    report(
+        "diff",
+        "Lendo o conteúdo completo dos arquivos alterados em lote.",
+    );
     let content = blobs(&path, wanted).await?;
     let mut files = BTreeMap::new();
     let mut patch_bytes = 0;
     let started = std::time::Instant::now();
-    for f in &snapshot.files {
+    for (index, f) in snapshot.files.iter().enumerate() {
+        if index % 25 == 0 {
+            report(
+                "diff",
+                &format!(
+                    "Comparando arquivos: {} de {} preparados.",
+                    index,
+                    snapshot.files.len()
+                ),
+            );
+        }
         if started.elapsed() > Duration::from_secs(30) {
             return Err("Cálculo de diff excedeu 30 segundos.".into());
         }
@@ -525,7 +567,22 @@ mod cache_tests {
                 version: "v1".into(),
             }],
         };
-        let (bundle, repository) = prepare(snapshot.clone(), root.path()).await.unwrap();
+        let stages = std::sync::Mutex::new(Vec::new());
+        let (bundle, repository) =
+            prepare_with_progress(snapshot.clone(), root.path(), &|step, _| {
+                stages.lock().unwrap().push(step.to_owned());
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            stages
+                .lock()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["base", "head", "tree", "diff", "diff"]
+        );
         assert!(bundle.files["a.ts"].diff.reviewable);
         assert!(read(&repository, "head", "unchanged.ts")
             .await

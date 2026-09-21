@@ -9,6 +9,11 @@ mod watches;
 use github::{FileDiff, Snapshot};
 use std::collections::HashMap;
 use tauri::{Manager, State};
+#[derive(Clone, serde::Serialize)]
+struct LoadingProgress {
+    step: String,
+    detail: String,
+}
 use tokio::sync::Mutex;
 
 struct Backend {
@@ -39,12 +44,28 @@ impl Default for Backend {
 async fn open_pr(
     app: tauri::AppHandle,
     url: String,
+    on_progress: tauri::ipc::Channel<LoadingProgress>,
     state: State<'_, Backend>,
 ) -> Result<Snapshot, String> {
+    let report = |step: &str, detail: &str| {
+        let _ = on_progress.send(LoadingProgress {
+            step: step.into(),
+            detail: detail.into(),
+        });
+    };
+    report("github", "Aguardando acesso ao GitHub para consultar a PR.");
     let _loading = state.loading.lock().await;
     let _permit = state.network.acquire().await.map_err(|e| e.to_string())?;
+    report(
+        "github",
+        "Buscando informações, commits e lista de arquivos alterados no GitHub.",
+    );
     let snapshot = github::open(&url).await?;
     if state.bundles.lock().await.contains_key(&snapshot.id) {
+        report(
+            "diff",
+            "Esta versão já está preparada no cache. Restaurando sua revisão.",
+        );
         return Ok(snapshot);
     }
     let root = app
@@ -52,7 +73,8 @@ async fn open_pr(
         .app_cache_dir()
         .map_err(|e| e.to_string())?
         .join("repositories");
-    let (bundle, repository) = repository::prepare(snapshot.clone(), &root).await?;
+    let (bundle, repository) =
+        repository::prepare_with_progress(snapshot.clone(), &root, &report).await?;
     *state.repository.lock().await = Some(std::sync::Arc::new(repository));
     let mut cache = state.bundles.lock().await;
     cache.clear();
