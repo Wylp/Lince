@@ -318,6 +318,7 @@ pub fn run() {
             submit_review_drafts,
             check_review_submission,
             load_progress,
+            set_focus_mode,
             save_progress
         ])
         .run(tauri::generate_context!())
@@ -632,4 +633,17 @@ async fn check_review_submission(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_focus_mode(
+    app: tauri::AppHandle,
+    state: State<'_, Backend>,
+    enabled: bool,
+) -> Result<(), String> {
+    let _guard = state.disk.lock().await;
+    let path = drafts_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || progress::set_focus_mode(&path, enabled))
+        .await
+        .map_err(|e| e.to_string())?
 }

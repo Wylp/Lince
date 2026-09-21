@@ -45,14 +45,30 @@ export default function CodeWorkspace({
   mark,
   saveScroll,
   loading,
+  focusMode,
+  exitFocus,
 }: {
   snapshot: Snapshot;
   review: ReviewProgress;
   select: (path: string) => void;
-  mark: (paths: string[], value: ReviewDecision) => void;
+  mark: (paths: string[], value: ReviewDecision) => Promise<void>;
+  focusMode: boolean;
+  exitFocus: () => Promise<void>;
   saveScroll: (path: string, top: number, left: number) => void;
   loading: boolean;
 }) {
+  const focusEnabled = useRef(focusMode);
+  focusEnabled.current = focusMode;
+  const focusPath = useRef(review.selected);
+  const [deciding, setDeciding] = useState(false);
+  const decidingRef = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const [pinned, setPinned] = useState(false),
     [hovered, setHovered] = useState(false),
     [keyboardTree, setKeyboardTree] = useState(false),
@@ -64,6 +80,12 @@ export default function CodeWorkspace({
   const folders = useMemo(() => folderSummaries(review.files), [review.files]);
   const context: ReviewContextHandler = (event, path, folder) => {
     event.preventDefault();
+    if (focusEnabled.current && (folder || path !== focusPath.current)) {
+      setMessage(
+        "No modo foco, decida apenas sobre o arquivo atual. Saia do modo para usar ações em lote.",
+      );
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     setContextTarget({
       path,
@@ -121,6 +143,12 @@ export default function CodeWorkspace({
   const dialog = useRef<HTMLDialogElement>(null),
     finder = useRef<HTMLDialogElement>(null);
   function navigate(next: Tab, record = true) {
+    if (focusEnabled.current && next.path !== focusPath.current) {
+      setMessage(
+        "Modo foco: registre uma decisão no arquivo atual ou saia do modo para navegar livremente.",
+      );
+      return;
+    }
     previewRequest.current++;
     setPreviewLoading(false);
     setTab(next);
@@ -139,6 +167,56 @@ export default function CodeWorkspace({
     redraw((n) => n + 1);
   }
   navigateRef.current = navigate;
+  useEffect(() => {
+    if (!focusMode || !project) return;
+    setQuick(false);
+    setContextTarget(null);
+    const next = snapshot.files.find((f) => !isResolved(review.files[f.path]));
+    if (next) {
+      focusPath.current = next.path;
+      navigateRef.current({ path: next.path, side: "head", mode: "diff" });
+    }
+  }, [focusMode, project]);
+  async function decide(paths: string[], decision: ReviewDecision) {
+    if (decidingRef.current || !paths.length) return;
+    if (focusEnabled.current && comments.current?.hasUnsaved()) {
+      setMessage(
+        "Salve ou cancele o comentário em edição antes de seguir para outro arquivo.",
+      );
+      return;
+    }
+    if (
+      focusEnabled.current &&
+      (paths.length !== 1 || paths[0] !== focusPath.current)
+    )
+      return;
+    decidingRef.current = true;
+    setDeciding(true);
+    try {
+      await mark(paths, decision);
+      if (!alive.current) return;
+      if (
+        focusEnabled.current &&
+        ["agree", "disagree", "notRead"].includes(decision)
+      ) {
+        const next = snapshot.files.find(
+          (f) => !paths.includes(f.path) && !isResolved(review.files[f.path]),
+        );
+        if (next) {
+          focusPath.current = next.path;
+          navigateRef.current({ path: next.path, side: "head", mode: "diff" });
+        }
+      }
+    } catch (e) {
+      if (alive.current)
+        setMessage(
+          `Não foi possível salvar a decisão. O arquivo continua aberto. ${String(e)}`,
+        );
+    } finally {
+      decidingRef.current = false;
+      if (alive.current) setDeciding(false);
+    }
+  }
   useEffect(() => {
     let stale = false;
     let instance: Project | null = null;
@@ -233,6 +311,12 @@ export default function CodeWorkspace({
     const listener = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
+        if (focusEnabled.current) {
+          setMessage(
+            "A busca de arquivos está bloqueada no modo foco. Use prévias ou saia do modo para navegar.",
+          );
+          return;
+        }
         setQuick(true);
         setQuickQuery("");
       }
@@ -254,6 +338,7 @@ export default function CodeWorkspace({
     if (quick) finder.current?.showModal();
   }, [quick]);
   function travel(delta: number) {
+    if (focusEnabled.current) return;
     const next = cursor.current + delta;
     if (next < 0 || next >= history.current.length) return;
     cursor.current = next;
@@ -391,13 +476,15 @@ export default function CodeWorkspace({
         {contextTarget && (
           <ReviewContextMenu
             target={contextTarget}
+            decisionsOnly={focusMode}
             count={contextFiles.length}
             viewable={contextViewable.length}
             close={() => setContextTarget(null)}
             choose={(decision) => {
-              const files =
-                decision === "viewed" ? contextViewable : contextFiles;
-              mark(
+              const files = ["viewed", "agree", "disagree"].includes(decision)
+                ? contextViewable
+                : contextFiles;
+              void decide(
                 files.map((f) => f.path),
                 decision,
               );
@@ -422,6 +509,7 @@ export default function CodeWorkspace({
           </small>
           <button
             aria-label="Buscar arquivo"
+            disabled={focusMode}
             title="Buscar arquivo (Cmd/Ctrl+P)"
             onClick={() => {
               setQuickQuery("");
@@ -525,6 +613,7 @@ export default function CodeWorkspace({
           <div className="sidebar-footer">
             <span>Somente leitura</span>
             <button
+              disabled={focusMode}
               onClick={() => {
                 setQuickQuery("");
                 setQuick(true);
@@ -537,6 +626,24 @@ export default function CodeWorkspace({
         </aside>
       </div>
       <main className="reader">
+        {focusMode && (
+          <div className="focus-mode-banner" role="status">
+            <span>
+              <strong>Modo foco</strong> ·{" "}
+              {snapshot.files.every((f) => isResolved(review.files[f.path]))
+                ? "Todos os arquivos têm uma decisão local."
+                : "Decida sobre este arquivo para seguir ao próximo pendente."}
+            </span>
+            <button
+              disabled={deciding}
+              onClick={() => {
+                void exitFocus().catch((e) => setMessage(String(e)));
+              }}
+            >
+              Sair do modo foco
+            </button>
+          </div>
+        )}
         <div
           className="editor-tabs"
           role="tablist"
@@ -564,7 +671,7 @@ export default function CodeWorkspace({
               </button>
               <button
                 aria-label={`Fechar aba ${t.path}`}
-                disabled={tabs.length === 1}
+                disabled={focusMode || tabs.length === 1}
                 onClick={() => {
                   const rest = tabs.filter((x) => key(x) !== key(t));
                   setTabs(rest);
@@ -605,15 +712,49 @@ export default function CodeWorkspace({
                 {tab.mode === "diff" ? "Arquivo completo" : "Ver diff"}
               </button>
             )}
-            {tab.mode === "diff" && (
+            {currentFile && (
+              <div
+                className="file-decisions"
+                role="group"
+                aria-label="Decisão sobre o arquivo"
+              >
+                {(
+                  [
+                    ["agree", "Concordo"],
+                    ["disagree", "Discordo"],
+                    ["notRead", "Não li"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`decision-${value}`}
+                    aria-pressed={
+                      review.files[currentFile.path]?.decision === value
+                    }
+                    disabled={
+                      loading ||
+                      deciding ||
+                      (value !== "notRead" && !loaded?.diff.reviewable)
+                    }
+                    onClick={() => void decide([currentFile.path], value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {tab.mode === "diff" && !focusMode && (
               <label className="review-toggle">
                 <input
                   type="checkbox"
                   aria-label="Marcar arquivo como revisado"
                   checked={review.files[tab.path]?.reviewed ?? false}
-                  disabled={loading || !loaded?.diff.reviewable}
+                  disabled={loading || deciding || !loaded?.diff.reviewable}
                   onChange={(e) =>
-                    mark([tab.path], e.target.checked ? "viewed" : "pending")
+                    void decide(
+                      [tab.path],
+                      e.target.checked ? "viewed" : "pending",
+                    )
                   }
                 />{" "}
                 {review.files[tab.path]?.approvedUnread
@@ -623,17 +764,22 @@ export default function CodeWorkspace({
             )}
           </div>
         </div>
+        {deciding && (
+          <div className="decision-saving" role="status">
+            Salvando decisão…
+          </div>
+        )}
         <div className="code-toolbar">
           <button
             aria-label="Voltar na navegação"
-            disabled={cursor.current <= 0}
+            disabled={focusMode || cursor.current <= 0}
             onClick={() => travel(-1)}
           >
             ←
           </button>
           <button
             aria-label="Avançar na navegação"
-            disabled={cursor.current >= history.current.length - 1}
+            disabled={focusMode || cursor.current >= history.current.length - 1}
             onClick={() => travel(1)}
           >
             →

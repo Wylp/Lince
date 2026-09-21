@@ -30,6 +30,7 @@ export interface FileProgress {
   version: string;
   reviewed: boolean;
   approvedUnread?: boolean;
+  decision?: "" | "agree" | "disagree" | "notRead";
   top: number;
   left: number;
 }
@@ -38,6 +39,7 @@ export interface ReviewProgress {
   files: Record<string, FileProgress>;
 }
 export interface Store {
+  focusMode?: boolean;
   schema: number;
   lastUrl: string;
   reviews: Record<string, ReviewProgress>;
@@ -82,14 +84,17 @@ export const statusLabels: Record<string, string> = {
   changed: "Modo alterado",
 };
 
-export type ReviewDecision = "pending" | "viewed" | "approvedUnread";
+export type ReviewDecision =
+  "pending" | "viewed" | "approvedUnread" | "agree" | "disagree" | "notRead";
 export function isResolved(file?: FileProgress): boolean {
-  return !!(file?.reviewed || file?.approvedUnread);
+  return !!(file?.reviewed || file?.approvedUnread || file?.decision);
 }
 export interface ReviewSummary {
   total: number;
   viewed: number;
   approvedUnread: number;
+  disagreed?: number;
+  notRead?: number;
 }
 export function folderSummaries(
   files: Record<string, FileProgress>,
@@ -105,10 +110,29 @@ export function folderSummaries(
         approvedUnread: 0,
       };
       summary.total++;
+      if (state.decision === "disagree")
+        summary.disagreed = (summary.disagreed ?? 0) + 1;
+      if (state.decision === "notRead")
+        summary.notRead = (summary.notRead ?? 0) + 1;
       if (state.reviewed) summary.viewed++;
       else if (state.approvedUnread) summary.approvedUnread++;
       folders.set(prefix, summary);
     }
   }
   return folders;
+}
+
+export function applyDecision(
+  file: FileProgress,
+  decision: ReviewDecision,
+): FileProgress {
+  return {
+    ...file,
+    reviewed: ["viewed", "agree", "disagree"].includes(decision),
+    approvedUnread: decision === "approvedUnread",
+    decision:
+      decision === "agree" || decision === "disagree" || decision === "notRead"
+        ? decision
+        : "",
+  };
 }

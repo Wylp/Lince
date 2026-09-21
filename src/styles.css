@@ -2173,7 +2173,7 @@ progress::-webkit-progress-value {
   width: auto;
   min-width: 0;
 }
-.tree-scroll .file-state:not(.done) {
+.tree-scroll .file-state:not(.done):not(.disagreed):not(.approved-unread) {
   width: 0;
   margin-left: -7px;
 }
@@ -2577,4 +2577,58 @@ progress::-webkit-progress-value {
   .loading-state .spinner {
     animation: none;
   }
+}
+
+.settings-button {
+  font-size: 19px;
+  padding: 6px 10px;
+}
+.focus-setting {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 18px 0;
+}
+.focus-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #203827;
+  border-bottom: 1px solid #486650;
+  font-size: 12px;
+  color: #c8e9d2;
+}
+.focus-mode-banner button {
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.file-decisions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.file-decisions button {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.file-decisions button[aria-pressed="true"] {
+  border-color: #a6e5b9;
+  color: #b9f3c9;
+  background: #23432e;
+}
+.file-decisions .decision-disagree[aria-pressed="true"],
+.file-state.disagreed {
+  color: #ffb2a5;
+}
+.file-decisions .decision-notRead[aria-pressed="true"] {
+  color: #e5c087;
+  border-color: #e5c087;
+}
+.decision-saving {
+  color: #a6c5af;
+  padding: 4px 14px;
+  font-size: 11px;
 }

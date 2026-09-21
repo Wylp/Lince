@@ -9,6 +9,8 @@ pub struct FileProgress {
     pub reviewed: bool,
     #[serde(default)]
     pub approved_unread: bool,
+    #[serde(default)]
+    pub decision: String,
     pub top: f64,
     pub left: f64,
 }
@@ -21,6 +23,8 @@ pub struct ReviewProgress {
 #[serde(rename_all = "camelCase")]
 pub struct Store {
     pub schema: u32,
+    #[serde(default)]
+    pub focus_mode: bool,
     pub last_url: String,
     pub reviews: BTreeMap<String, ReviewProgress>,
 }
@@ -28,6 +32,7 @@ impl Default for Store {
     fn default() -> Self {
         Self {
             schema: 1,
+            focus_mode: false,
             last_url: String::new(),
             reviews: BTreeMap::new(),
         }
@@ -35,7 +40,7 @@ impl Default for Store {
 }
 
 pub(crate) type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
-const SCHEMA: u32 = 5;
+const SCHEMA: u32 = 6;
 
 fn legacy(path: &Path) -> DbResult<Store> {
     match std::fs::read(path) {
@@ -86,6 +91,7 @@ pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
                 path TEXT NOT NULL, version TEXT NOT NULL,
                 reviewed INTEGER NOT NULL CHECK(reviewed IN (0,1)),
                 approved_unread INTEGER NOT NULL DEFAULT 0 CHECK(approved_unread IN (0,1)),
+                decision TEXT NOT NULL DEFAULT '' CHECK(decision IN ('','agree','disagree','notRead')),
                 scroll_top REAL NOT NULL CHECK(scroll_top >= 0),
                 scroll_left REAL NOT NULL CHECK(scroll_left >= 0),
                 PRIMARY KEY(review_key, path)
@@ -124,6 +130,12 @@ pub(crate) fn connect(path: &Path) -> DbResult<Connection> {
                 tx.execute_batch("ALTER TABLE file_progress ADD COLUMN approved_unread INTEGER NOT NULL DEFAULT 0 CHECK(approved_unread IN (0,1));")?;
             }
         }
+        if locked_version > 0 && locked_version < 6 {
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('file_progress') WHERE name='decision')", [], |r| r.get(0))?;
+            if !exists {
+                tx.execute_batch("ALTER TABLE file_progress ADD COLUMN decision TEXT NOT NULL DEFAULT '' CHECK(decision IN ('','agree','disagree','notRead'));")?;
+            }
+        }
         tx.pragma_update(None, "user_version", SCHEMA)?;
         tx.commit()?;
     }
@@ -146,10 +158,10 @@ fn write_review(tx: &Transaction<'_>, key: &str, review: &ReviewProgress) -> DbR
         params![key, review.selected],
     )?;
     {
-        let mut upsert = tx.prepare_cached("INSERT INTO file_progress(review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread)
-            VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(review_key,path) DO UPDATE SET
-            version=excluded.version,reviewed=excluded.reviewed,scroll_top=excluded.scroll_top,scroll_left=excluded.scroll_left,approved_unread=excluded.approved_unread
-            WHERE version != excluded.version OR reviewed != excluded.reviewed OR approved_unread != excluded.approved_unread
+        let mut upsert = tx.prepare_cached("INSERT INTO file_progress(review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread,decision)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(review_key,path) DO UPDATE SET
+            version=excluded.version,reviewed=excluded.reviewed,scroll_top=excluded.scroll_top,scroll_left=excluded.scroll_left,approved_unread=excluded.approved_unread,decision=excluded.decision
+            WHERE version != excluded.version OR reviewed != excluded.reviewed OR approved_unread != excluded.approved_unread OR decision != excluded.decision
                 OR scroll_top != excluded.scroll_top OR scroll_left != excluded.scroll_left")?;
         for (path, file) in &review.files {
             if !file.top.is_finite() || !file.left.is_finite() || file.top < 0.0 || file.left < 0.0
@@ -161,6 +173,14 @@ fn write_review(tx: &Transaction<'_>, key: &str, review: &ReviewProgress) -> DbR
                     "Um arquivo não pode estar visto e aprovado sem leitura ao mesmo tempo.".into(),
                 );
             }
+            if !matches!(
+                file.decision.as_str(),
+                "" | "agree" | "disagree" | "notRead"
+            ) || (!file.decision.is_empty()
+                && (file.approved_unread || file.reviewed != (file.decision != "notRead")))
+            {
+                return Err("Decisão de revisão inválida ou contraditória.".into());
+            }
             upsert.execute(params![
                 key,
                 path,
@@ -168,7 +188,8 @@ fn write_review(tx: &Transaction<'_>, key: &str, review: &ReviewProgress) -> DbR
                 file.reviewed,
                 file.top,
                 file.left,
-                file.approved_unread
+                file.approved_unread,
+                file.decision
             ])?;
         }
     }
@@ -200,8 +221,18 @@ pub fn load(path: &Path) -> Result<Store, String> {
             )
             .optional()?
             .unwrap_or_default();
+        let focus_mode = tx
+            .query_row(
+                "SELECT value FROM app_state WHERE key='focus_mode'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .as_deref()
+            == Some("true");
         let mut store = Store {
             last_url,
+            focus_mode,
             ..Store::default()
         };
         {
@@ -219,7 +250,7 @@ pub fn load(path: &Path) -> Result<Store, String> {
                 );
             }
             let mut statement = tx.prepare(
-                "SELECT review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread FROM file_progress",
+                "SELECT review_key,path,version,reviewed,scroll_top,scroll_left,approved_unread,decision FROM file_progress",
             )?;
             for row in statement.query_map([], |r| {
                 Ok((
@@ -231,6 +262,7 @@ pub fn load(path: &Path) -> Result<Store, String> {
                         top: r.get(4)?,
                         left: r.get(5)?,
                         approved_unread: r.get(6)?,
+                        decision: r.get(7)?,
                     },
                 ))
             })? {
@@ -428,6 +460,7 @@ mod tests {
                     version: "v1".into(),
                     reviewed: true,
                     approved_unread: false,
+                    decision: String::new(),
                     top: 321.5,
                     left: 12.0,
                 },
@@ -532,6 +565,7 @@ mod discovery_storage_tests {
                     version: "v1".into(),
                     reviewed: false,
                     approved_unread: false,
+                    decision: String::new(),
                     top: 0.0,
                     left: 0.0,
                 },
@@ -602,6 +636,8 @@ pub struct ReviewHistory {
     pub key: String,
     pub reviewed: i64,
     pub approved_unread: i64,
+    pub not_read: i64,
+    pub disagreed: i64,
     pub total: i64,
     pub last_reviewed_at: Option<i64>,
 }
@@ -611,9 +647,9 @@ pub fn review_history(path: &Path) -> Result<Vec<ReviewHistory>, String> {
         let conn = connect(path)?;
         let mut query = conn.prepare(
             "SELECT r.review_key,
-            COALESCE(f.reviewed,0),COALESCE(f.total,0),NULLIF(a.last_reviewed_at,0),COALESCE(f.approved_unread,0)
+            COALESCE(f.reviewed,0),COALESCE(f.total,0),NULLIF(a.last_reviewed_at,0),COALESCE(f.approved_unread,0),COALESCE(f.not_read,0),COALESCE(f.disagreed,0)
             FROM reviews r
-            LEFT JOIN (SELECT review_key,SUM(reviewed) reviewed,COUNT(*) total,SUM(approved_unread) approved_unread
+            LEFT JOIN (SELECT review_key,SUM(reviewed) reviewed,COUNT(*) total,SUM(approved_unread) approved_unread,SUM(decision='notRead') not_read,SUM(decision='disagree') disagreed
                 FROM file_progress GROUP BY review_key) f USING(review_key)
             LEFT JOIN (SELECT review_key,MAX(last_reviewed_at) last_reviewed_at
                 FROM review_activity GROUP BY review_key) a USING(review_key)
@@ -627,6 +663,8 @@ pub fn review_history(path: &Path) -> Result<Vec<ReviewHistory>, String> {
                     total: r.get(2)?,
                     last_reviewed_at: r.get(3)?,
                     approved_unread: r.get(4)?,
+                    not_read: r.get(5)?,
+                    disagreed: r.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -708,6 +746,69 @@ mod history_tests {
 mod decision_tests {
     use super::*;
     #[test]
+    fn v5_migration_and_decisions_preserve_progress_and_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("progress.sqlite3");
+        let mut review = ReviewProgress::default();
+        review.files.insert(
+            "old.ts".into(),
+            FileProgress {
+                version: "v1".into(),
+                reviewed: true,
+                top: 42.0,
+                ..Default::default()
+            },
+        );
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        let conn = connect(&path).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE file_progress DROP COLUMN decision; PRAGMA user_version=5;",
+        )
+        .unwrap();
+        drop(conn);
+        let migrated = load(&path).unwrap();
+        let old = &migrated.reviews["org/repo#1"].files["old.ts"];
+        assert!(old.reviewed);
+        assert_eq!(old.top, 42.0);
+        assert_eq!(old.decision, "");
+        assert!(!migrated.focus_mode);
+        set_focus_mode(&path, true).unwrap();
+        for decision in ["agree", "disagree", "notRead"] {
+            review.files.insert(
+                decision.into(),
+                FileProgress {
+                    version: "v1".into(),
+                    reviewed: decision != "notRead",
+                    decision: decision.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        save_review(&path, "url", "org/repo#1", &review).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(loaded.focus_mode);
+        assert_eq!(
+            loaded.reviews["org/repo#1"].files["notRead"].decision,
+            "notRead"
+        );
+        let history = review_history(&path).unwrap();
+        assert_eq!(
+            (
+                history[0].reviewed,
+                history[0].not_read,
+                history[0].disagreed,
+                history[0].approved_unread,
+                history[0].total
+            ),
+            (3, 1, 1, 0, 4)
+        );
+        review.files.get_mut("notRead").unwrap().reviewed = true;
+        assert!(save_review(&path, "changed", "org/repo#1", &review).is_err());
+        assert_eq!(load(&path).unwrap().last_url, "url");
+        set_focus_mode(&path, false).unwrap();
+        assert!(!load(&path).unwrap().focus_mode);
+    }
+    #[test]
     fn v4_migration_preserves_seen_files_and_stores_unread_approval_separately() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("progress.sqlite3");
@@ -764,4 +865,10 @@ mod decision_tests {
         assert_eq!(saved.last_url, "url");
         assert!(!saved.reviews["org/repo#1"].files["test/e2e.ts"].reviewed);
     }
+}
+
+pub fn set_focus_mode(path: &Path, enabled: bool) -> Result<(), String> {
+    let conn = connect(path).map_err(|e| e.to_string())?;
+    conn.execute("INSERT INTO app_state(key,value) VALUES('focus_mode',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [if enabled { "true" } else { "false" }]).map_err(|e| e.to_string())?;
+    Ok(())
 }

@@ -227,6 +227,16 @@ test.beforeEach(async ({ page }) => {
               message: "Sua conta está pronta para abrir pull requests.",
             }
           );
+        if (command === "set_focus_mode") {
+          if (win.settingsError) throw "Falha ao salvar preferência";
+          const saved = JSON.parse(
+            localStorage.getItem("test-progress") ??
+              '{"schema":1,"lastUrl":"","reviews":{}}',
+          );
+          saved.focusMode = args.enabled;
+          localStorage.setItem("test-progress", JSON.stringify(saved));
+          return;
+        }
         if (command === "load_progress")
           return JSON.parse(
             localStorage.getItem("test-progress") ||
@@ -270,7 +280,9 @@ test.beforeEach(async ({ page }) => {
               headSha: "new5678",
               files: files.map((f) => ({ ...f, version: "v2" })),
             };
-          return snapshot;
+          return win.focusFixture
+            ? { ...snapshot, files: files.slice(0, 3) }
+            : snapshot;
         }
         const textFor = (path: string) =>
           (path === "src/controller.ts"
@@ -507,7 +519,9 @@ async function open(page: import("@playwright/test").Page) {
     .getByLabel("URL da pull request")
     .fill("https://github.com/acme/project/pull/42");
   await page.getByRole("button", { name: "Abrir PR" }).click();
-  await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
+  await expect(
+    page.getByRole("group", { name: "Decisão sobre o arquivo" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Mostrar arquivos" }).hover();
   await page
     .getByRole("button", { name: "Fixar explorador", exact: true })
@@ -618,7 +632,10 @@ test("filters pending files, ignores stale requests and reports save failures", 
   await page.evaluate(() => {
     (window as any).failSave = true;
   });
-  await page.getByLabel("Marcar arquivo como revisado").check();
+  await page.getByLabel("Marcar arquivo como revisado").click();
+  await expect(
+    page.getByLabel("Marcar arquivo como revisado"),
+  ).not.toBeChecked();
   await expect(page.locator(".banner[role=alert]")).toContainText(
     "Disco indisponível",
   );
@@ -1496,10 +1513,14 @@ test("inline comments follow reverse selection, preserve text across files and c
   });
   await expect(form).toContainText("head · linhas 6–9");
   await expect(editor.locator(".inline-comment-form")).toBeVisible();
-  const lineBox = await lines.filter({ hasText: /^9$/ }).boundingBox();
-  const formBox = await form.boundingBox();
-  expect(formBox!.y).toBeGreaterThanOrEqual(lineBox!.y + lineBox!.height);
-  expect(formBox!.y - lineBox!.y - lineBox!.height).toBeLessThan(20);
+  await expect
+    .poll(async () => {
+      const lineBox = await lines.filter({ hasText: /^9$/ }).boundingBox();
+      const formBox = await form.boundingBox();
+      const gap = formBox!.y - lineBox!.y - lineBox!.height;
+      return gap >= 0 && gap < 20;
+    })
+    .toBe(true);
   await page.getByLabel("Comentário da revisão").fill("Texto ainda não salvo");
   const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
   await tree.getByRole("button", { name: /service.ts/ }).click();
@@ -1580,4 +1601,115 @@ test("failed loading clears the stepper and permits retry", async ({
   });
   await page.getByRole("button", { name: "Abrir PR" }).click();
   await expect(page.getByLabel("Marcar arquivo como revisado")).toBeEnabled();
+});
+
+test("file decisions and folder actions stay distinct and persist locally", async ({
+  page,
+}) => {
+  await open(page);
+  const actions = page.getByRole("group", { name: "Decisão sobre o arquivo" });
+  await actions.getByRole("button", { name: "Discordo", exact: true }).click();
+  await expect(
+    actions.getByRole("button", { name: "Discordo", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await expect(
+    tree
+      .getByRole("button", { name: /controller.ts/ })
+      .getByLabel("Discordo", { exact: true }),
+  ).toBeVisible();
+  await tree.locator('summary[title="src"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Não li (2)", exact: true }).click();
+  await expect(
+    tree
+      .getByRole("button", { name: /controller.ts/ })
+      .getByLabel("Não li", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    tree
+      .getByRole("button", { name: /service.ts/ })
+      .getByLabel("Não li", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await open(page);
+  await expect(
+    actions.getByRole("button", { name: "Não li", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await tree.locator('summary[title="src"]').click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Concordo (2)", exact: true })
+    .click();
+  await expect(
+    tree.locator('summary[title="src"]').getByLabel(/Pasta vista/),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+});
+
+test("focus mode persists and advances only after saved decisions, with a clear exit", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).focusFixture = true;
+  });
+  await page
+    .getByRole("button", { name: "Configurações do aplicativo" })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Ações em lote ficam desativadas",
+  );
+  await page.getByLabel("Ativar modo foco").check();
+  await page.getByRole("button", { name: "Fechar configurações" }).click();
+  await open(page);
+  const heading = page.locator(".file-heading");
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await tree.getByRole("button", { name: /service.ts/ }).click();
+  await expect(heading).toContainText("controller.ts");
+  await tree.locator('summary[title="src"]').click({ button: "right" });
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.keyboard.press("Meta+p");
+  await expect(page.locator(".quick-file-dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Voltar na navegação", exact: true }),
+  ).toBeDisabled();
+  const actions = page.getByRole("group", { name: "Decisão sobre o arquivo" });
+  await page.evaluate(() => {
+    (window as any).failSave = true;
+  });
+  await actions.getByRole("button", { name: "Concordo", exact: true }).click();
+  await expect(page.locator(".metadata-note")).toContainText(
+    "Não foi possível salvar a decisão",
+  );
+  await expect(heading).toContainText("controller.ts");
+  await page.evaluate(() => {
+    (window as any).failSave = false;
+  });
+  await actions.getByRole("button", { name: "Concordo", exact: true }).click();
+  await expect(heading).toContainText("service.ts");
+  await actions.getByRole("button", { name: "Discordo", exact: true }).click();
+  await expect(heading).toContainText("image.png");
+  await expect(
+    actions.getByRole("button", { name: "Concordo", exact: true }),
+  ).toBeDisabled();
+  await actions.getByRole("button", { name: "Não li", exact: true }).click();
+  await expect(page.locator(".focus-mode-banner")).toContainText(
+    "Todos os arquivos têm uma decisão local",
+  );
+  await page.screenshot({
+    path: `test-results/focus-mode-${test.info().project.name}.png`,
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Configurações do aplicativo" })
+    .click();
+  await expect(page.getByLabel("Ativar modo foco")).toBeChecked();
+  await page.getByRole("button", { name: "Fechar configurações" }).click();
+  await open(page);
+  await page
+    .getByRole("button", { name: "Sair do modo foco", exact: true })
+    .click();
+  await expect(page.locator(".focus-mode-banner")).toHaveCount(0);
+  await tree.getByRole("button", { name: /controller.ts/ }).click();
+  await expect(heading).toContainText("controller.ts");
 });

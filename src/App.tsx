@@ -1,3 +1,4 @@
+import { AppSettings } from "./AppSettings";
 import { LoadingState, prLoadingSteps } from "./LoadingState";
 import { useNotifications } from "./notifications";
 import { ReviewHistory } from "./ReviewHistory";
@@ -18,7 +19,7 @@ import logo from "./assets/lince-logo.png";
 import { UpdateButton } from "./UpdateButton";
 import { PrBrowser } from "./PrBrowser";
 import { Avatar } from "./Avatar";
-import { emptyStore, reconcile } from "./model";
+import { emptyStore, reconcile, applyDecision } from "./model";
 import type { ReviewProgress, Snapshot, Store } from "./model";
 
 export default function App() {
@@ -32,6 +33,11 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState({ active: 0, detail: "" });
   const opening = useRef(false);
   const [ready, setReady] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const changeFocusMode = async (enabled: boolean) => {
+    await invoke("set_focus_mode", { enabled });
+    setFocusMode(enabled);
+  };
   const [error, setError] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -154,6 +160,7 @@ export default function App() {
       .then((saved) => {
         if (disposed) return;
         store.current = saved;
+        setFocusMode(saved.focusMode ?? false);
         setReady(true);
       })
       .catch((err) => {
@@ -198,6 +205,13 @@ export default function App() {
   const approvedUnread = review
     ? Object.values(review.files).filter((f) => f.approvedUnread).length
     : 0;
+  const notRead = review
+    ? Object.values(review.files).filter((f) => f.decision === "notRead").length
+    : 0;
+  const disagreed = review
+    ? Object.values(review.files).filter((f) => f.decision === "disagree")
+        .length
+    : 0;
   const total = snapshot?.files.length ?? 0;
 
   return (
@@ -220,6 +234,11 @@ export default function App() {
         }
       />
       <header className="topbar">
+        <AppSettings
+          focusMode={focusMode}
+          change={changeFocusMode}
+          disabled={loading || !ready}
+        />
         <button
           className="brand brand-home"
           aria-label="Voltar para a home do Lince"
@@ -408,15 +427,17 @@ export default function App() {
             </button>
             <div
               className="progress-summary"
-              title={`${count} vistos, ${approvedUnread} aprovados sem ler, ${total - count - approvedUnread} pendentes`}
+              title={`${count} vistos, ${approvedUnread} aprovados sem ler, ${notRead} não lidos, ${disagreed} discordâncias, ${total - count - approvedUnread - notRead} pendentes`}
             >
               <span>
                 <strong>{count}</strong> / {total} revisados
                 {approvedUnread > 0 && ` · ${approvedUnread} sem ler`}
+                {notRead > 0 && ` · ${notRead} não lidos`}
+                {disagreed > 0 && ` · ${disagreed} discordâncias`}
               </span>
               <progress
                 aria-label="Progresso da revisão"
-                value={count + approvedUnread}
+                value={count + approvedUnread + notRead}
                 max={total || 1}
               />
             </div>
@@ -436,20 +457,36 @@ export default function App() {
               snapshot={snapshot}
               review={review}
               loading={loading}
+              focusMode={focusMode}
+              exitFocus={() => changeFocusMode(false)}
               select={select}
-              mark={(paths, decision) => {
+              mark={async (paths, decision) => {
                 const current = active.current;
                 if (!current) return;
-                const files = { ...current.review.files };
+                const previous = current.review.files;
+                const files = { ...previous };
                 for (const path of paths) {
                   if (files[path])
-                    files[path] = {
-                      ...files[path],
-                      reviewed: decision === "viewed",
-                      approvedUnread: decision === "approvedUnread",
-                    };
+                    files[path] = applyDecision(files[path], decision);
                 }
                 update({ ...current.review, files }, true);
+                try {
+                  await flush();
+                } catch (error) {
+                  if (active.current === current) {
+                    const restored = { ...current.review.files };
+                    for (const path of paths)
+                      if (restored[path] && previous[path])
+                        restored[path] = {
+                          ...restored[path],
+                          reviewed: previous[path].reviewed,
+                          approvedUnread: previous[path].approvedUnread,
+                          decision: previous[path].decision,
+                        };
+                    update({ ...current.review, files: restored }, false);
+                  }
+                  throw error;
+                }
               }}
               saveScroll={(path, top, left) => {
                 const current = active.current;

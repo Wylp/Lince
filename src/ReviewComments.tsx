@@ -28,6 +28,7 @@ interface Draft {
 }
 export interface CommentsHandle {
   compose: (target: CommentTarget) => void;
+  hasUnsaved: () => boolean;
 }
 const empty: Draft = {
   snapshotId: "",
@@ -93,6 +94,7 @@ export const ReviewComments = forwardRef<
     if (listOpen) list.current?.showModal();
   }, [listOpen]);
   useImperativeHandle(ref, () => ({
+    hasUnsaved: () => !!target && (!!body.trim() || busy),
     compose: (value) => {
       if (busy) return;
       if (target && body.trim()) {

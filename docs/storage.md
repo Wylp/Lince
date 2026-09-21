@@ -15,7 +15,7 @@ O Lince usa SQLite incorporado ao executável, via `rusqlite`/`bundled`. Não pr
 | `review_drafts` | Lote local por PR, snapshot, comentários, revisão de concorrência e estado do envio |
 | `codebases` | Caminhos e nomes dos serviços de cada repo |
 
-O schema é versionado por `PRAGMA user_version` (atualmente 5). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e índices ficam em memória. Os objetos de código também persistem em um **cache Git bare separado**, em `app_cache_dir()/repositories`; não entram no SQLite. Filtros, abas de contexto e texto de comentário ainda não salvo ficam em memória. Rascunhos salvos persistem no SQLite. Veja [cache e retenção de código](code-workspace.md).
+O schema é versionado por `PRAGMA user_version` (atualmente 6). Autenticação continua com o `gh`; tokens nunca entram no banco. Metadados carregados, diffs e índices ficam em memória. Os objetos de código também persistem em um **cache Git bare separado**, em `app_cache_dir()/repositories`; não entram no SQLite. Filtros, abas de contexto e texto de comentário ainda não salvo ficam em memória. Rascunhos salvos persistem no SQLite. Veja [cache e retenção de código](code-workspace.md).
 
 ## Arquivo
 
@@ -50,3 +50,5 @@ O schema 3 acrescenta `watched_repos`, preservando dados dos schemas anteriores.
 O schema 4 acrescenta `review_drafts`, preservando progresso e configurações. Cada lote guarda intervalos, lados e textos junto ao snapshot. Gravações de rascunhos usam transação imediata e revisão otimista: uma janela não sobrescreve silenciosamente os comentários de outra. O estado do envio é persistido antes da requisição e reconciliado por um marcador na revisão do GitHub; veja [comentários](code-workspace.md).
 
 O schema 5 acrescenta `file_progress.approved_unread` com valor inicial falso, sem alterar marcações existentes. `reviewed` e `approved_unread` são mutuamente exclusivos na gravação. O histórico mantém contagens separadas; ambos retiram o arquivo dos pendentes, mas aprovação sem leitura não infla a contagem de arquivos vistos. As duas decisões são invalidadas se a versão do arquivo mudar. Pastas não gravam um estado independente: agregam todos os arquivos alterados descendentes, incluindo os ocultos por filtros.
+
+O schema 6 acrescenta `file_progress.decision` (`agree`, `disagree`, `notRead` ou vazio), preservando marcações e posições existentes. Concordo/Discordo contam como leitura; Não li é uma decisão concluída, mas não leitura nem aprovação. O histórico mantém contagens separadas de não lidos e discordâncias. A validação rejeita combinações contraditórias. A configuração opcional `app_state.focus_mode` persiste separadamente do progresso; a revisão sequencial só avança depois da gravação da decisão. Todas as decisões continuam associadas à versão do arquivo e são invalidadas quando ela muda.

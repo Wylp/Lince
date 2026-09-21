@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "react-diff-view";
-import { reconcile, folderSummaries } from "./model";
+import { reconcile, folderSummaries, applyDecision, isResolved } from "./model";
 import type { Snapshot } from "./model";
 const snapshot = {
   files: [
@@ -96,5 +96,28 @@ describe("local review decisions", () => {
       approvedUnread: 1,
     });
     expect(groups.get("src-other/")?.total).toBe(1);
+  });
+});
+
+describe("per-file review decisions", () => {
+  it("distinguishes unread from approval and clears mutually exclusive decisions", () => {
+    const file = { version: "v", reviewed: false, top: 17, left: 0 };
+    const agreed = applyDecision(file, "agree");
+    expect(agreed.reviewed).toBe(true);
+    const unread = applyDecision(agreed, "notRead");
+    expect(unread).toMatchObject({
+      decision: "notRead",
+      reviewed: false,
+      approvedUnread: false,
+      top: 17,
+    });
+    expect(isResolved(unread)).toBe(true);
+    expect(applyDecision(unread, "pending").decision).toBe("");
+    const result = reconcile(
+      { files: [{ path: "a", version: "next" }] } as Snapshot,
+      { selected: "a", files: { a: unread } },
+    );
+    expect(result.invalidated).toBe(1);
+    expect(isResolved(result.review.files.a)).toBe(false);
   });
 });

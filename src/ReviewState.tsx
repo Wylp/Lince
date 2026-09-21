@@ -24,27 +24,38 @@ export function ReviewBadge({
   if (!total) return null;
   const viewed = summary?.viewed ?? (file?.reviewed ? 1 : 0);
   const unread = summary?.approvedUnread ?? (file?.approvedUnread ? 1 : 0);
-  const done = viewed + unread === total;
+  const notRead = summary?.notRead ?? (file?.decision === "notRead" ? 1 : 0);
+  const disagreed =
+    summary?.disagreed ?? (file?.decision === "disagree" ? 1 : 0);
+  const done = viewed + unread + notRead === total;
   const label = summary
-    ? `${viewed} vistos, ${unread} aprovados sem ler, ${total - viewed - unread} pendentes${viewed === total ? " · Pasta vista" : done ? " · Pasta concluída com arquivos não lidos" : ""}`
-    : viewed
-      ? "Revisado"
-      : unread
-        ? "Aprovado sem ler"
-        : "Pendente";
+    ? `${viewed} vistos, ${unread} aprovados sem ler, ${total - viewed - unread - notRead} pendentes${notRead ? ` · ${notRead} não lidos` : ""}${disagreed ? ` · ${disagreed} discordâncias` : ""}${viewed === total && !disagreed ? " · Pasta vista" : done ? (disagreed ? " · Pasta concluída com discordâncias" : " · Pasta concluída com arquivos não lidos") : ""}`
+    : file?.decision === "agree"
+      ? "Concordo"
+      : file?.decision === "disagree"
+        ? "Discordo"
+        : file?.decision === "notRead"
+          ? "Não li"
+          : viewed
+            ? "Revisado"
+            : unread
+              ? "Aprovado sem ler"
+              : "Pendente";
   return (
     <span
-      className={`file-state ${done ? (unread ? "approved-unread" : "done") : ""}`}
+      className={`file-state ${disagreed ? "disagreed" : done ? (unread || notRead ? "approved-unread" : "done") : ""}`}
       aria-label={label}
       title={label}
     >
-      {done
-        ? unread
-          ? "≈✓"
-          : "✓"
-        : summary
-          ? `${viewed + unread}/${total}`
-          : ""}
+      {disagreed && done
+        ? "!"
+        : done
+          ? unread || notRead
+            ? "≈✓"
+            : "✓"
+          : summary
+            ? `${viewed + unread + notRead}/${total}`
+            : ""}
     </span>
   );
 }
@@ -54,12 +65,14 @@ export function ReviewContextMenu({
   viewable,
   close,
   choose,
+  decisionsOnly = false,
 }: {
   target: ReviewContextTarget;
   count: number;
   viewable: number;
   close: () => void;
   choose: (decision: ReviewDecision) => void;
+  decisionsOnly?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -128,40 +141,69 @@ export function ReviewContextMenu({
           ? `${count} arquivos alterados nesta pasta`
           : "Estado local da revisão"}
       </p>
-      <button
-        role="menuitem"
-        disabled={!viewable}
-        onClick={() => {
-          choose("viewed");
-          finish();
-        }}
-      >
-        ✓ Marcar como visto{target.folder ? ` (${viewable})` : ""}
-      </button>
-      {!target.folder && (
+      {(
+        [
+          ["agree", "Concordo"],
+          ["disagree", "Discordo"],
+          ["notRead", "Não li"],
+        ] as const
+      ).map(([decision, label]) => (
         <button
+          key={decision}
           role="menuitem"
-          disabled={!count}
+          disabled={!count || (decision !== "notRead" && !viewable)}
           onClick={() => {
-            choose("approvedUnread");
+            choose(decision);
             finish();
           }}
         >
-          ≈✓ Aprovado sem ler
+          {label}
+          {target.folder
+            ? ` (${decision === "notRead" ? count : viewable})`
+            : ""}
         </button>
+      ))}
+      {!decisionsOnly && (
+        <>
+          <button
+            role="menuitem"
+            disabled={!viewable}
+            onClick={() => {
+              choose("viewed");
+              finish();
+            }}
+          >
+            ✓ Marcar como visto{target.folder ? ` (${viewable})` : ""}
+          </button>
+          {!target.folder && (
+            <button
+              role="menuitem"
+              disabled={!count}
+              onClick={() => {
+                choose("approvedUnread");
+                finish();
+              }}
+            >
+              ≈✓ Aprovado sem ler
+            </button>
+          )}
+          <button
+            role="menuitem"
+            disabled={!count}
+            onClick={() => {
+              choose("pending");
+              finish();
+            }}
+          >
+            ○ Marcar como pendente
+          </button>
+        </>
       )}
-      <button
-        role="menuitem"
-        disabled={!count}
-        onClick={() => {
-          choose("pending");
-          finish();
-        }}
-      >
-        ○ Marcar como pendente
-      </button>
       {viewable < count && (
-        <p>Marcar como visto se aplica apenas aos diffs disponíveis.</p>
+        <p>
+          Concordar, discordar e marcar como visto se aplicam apenas aos diffs
+          disponíveis.
+        </p>
       )}
       {!count && <p>Apenas arquivos alterados na PR têm estado de revisão.</p>}
     </div>,

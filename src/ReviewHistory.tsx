@@ -7,6 +7,8 @@ interface Entry {
   key: string;
   reviewed: number;
   approvedUnread?: number;
+  notRead?: number;
+  disagreed?: number;
   total: number;
   lastReviewedAt: number | null;
 }
@@ -52,8 +54,9 @@ export function ReviewHistory({
       e.key.toLowerCase().includes(query.trim().toLowerCase()) &&
       (!status ||
         (status === "complete"
-          ? e.total > 0 && e.reviewed + (e.approvedUnread ?? 0) === e.total
-          : e.reviewed + (e.approvedUnread ?? 0) < e.total)),
+          ? e.total > 0 &&
+            e.reviewed + (e.approvedUnread ?? 0) + (e.notRead ?? 0) === e.total
+          : e.reviewed + (e.approvedUnread ?? 0) + (e.notRead ?? 0) < e.total)),
   );
   return (
     <main className="pr-browser history-browser">
@@ -151,8 +154,18 @@ export function ReviewHistory({
                         ? ` · ${entry.approvedUnread} aprovados sem ler`
                         : ""}
                     </span>
+                    {entry.notRead ? (
+                      <small>{entry.notRead} não lidos</small>
+                    ) : null}
+                    {entry.disagreed ? (
+                      <small>{entry.disagreed} discordâncias</small>
+                    ) : null}
                     <progress
-                      value={entry.reviewed + (entry.approvedUnread ?? 0)}
+                      value={
+                        entry.reviewed +
+                        (entry.approvedUnread ?? 0) +
+                        (entry.notRead ?? 0)
+                      }
                       max={entry.total || 1}
                     />
                   </div>

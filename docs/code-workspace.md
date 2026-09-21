@@ -83,3 +83,11 @@ Monaco é carregado por importação dinâmica ao entrar no workspace. Workers e
 Referências: [Monaco](https://github.com/microsoft/monaco-editor), [API Monaco](https://microsoft.github.io/monaco-editor/docs.html), [git fetch](https://git-scm.com/docs/git-fetch), [git cat-file](https://git-scm.com/docs/git-cat-file), [revisões GitHub](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request).
 
 Parsers: [Tree-sitter e bindings Rust](https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_rust/README.md). Gramáticas oficiais são dependências fixadas no `Cargo.lock`.
+
+## Decisões por arquivo e modo foco
+
+O cabeçalho e o clique direito oferecem Concordo, Discordo e Não li. Pastas aplicam a decisão aos arquivos alterados descendentes, mesmo ocultos por filtros; Concordo/Discordo se limitam aos diffs disponíveis. O resumo distingue leitura, discordância e ausência de leitura. Nada é enviado ao GitHub por essas ações.
+
+Em Configurações, o modo foco (desativado inicialmente) inicia no primeiro arquivo pendente e bloqueia a troca manual de arquivos, o histórico de navegação, a busca e as ações em lote. Cada decisão salva abre o próximo pendente; falhas de gravação mantêm o arquivo atual. Um comentário em edição precisa ser salvo ou cancelado antes de decidir. Prévias de definições continuam disponíveis e o botão Sair do modo foco libera a navegação. A preferência persiste no SQLite; o app continua iniciando na home com URL vazia.
+
+Validação desta mudança: testes de navegador em Chromium/WebKit, testes unitários do modelo, migração SQLite 5→6 e build nativa macOS. Windows/Linux ainda dependem de validação nativa nesses sistemas.
