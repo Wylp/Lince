@@ -967,7 +967,7 @@ test("navigates to unchanged definitions, previews them and keeps source read-on
     .locator(".monaco-diff-editor .editor.modified .view-lines")
     .getByText("calculateTotal", { exact: true })
     .last();
-  await call.click();
+  await call.click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1061,7 +1061,7 @@ test("base references stay on the base snapshot with tsconfig aliases", async ({
     .locator(".monaco-diff-editor .editor.original .view-lines")
     .getByText("calculateTotal", { exact: true })
     .last();
-  await call.click();
+  await call.click({ modifiers: ["Alt"] });
   await page.keyboard.press("F12");
   await expect(page.locator(".file-heading")).toContainText("src/utils.ts", {
     timeout: 15000,
@@ -1141,7 +1141,7 @@ test("previews syntax candidates outside the diff, exposes limits and stays read
     .locator(".view-lines")
     .getByText("calculate", { exact: true })
     .last();
-  await call.click();
+  await call.click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1185,7 +1185,7 @@ test("loads JS dependencies on demand beyond 2000 unrelated files and only on re
     .locator(".monaco-diff-editor .editor.modified .view-lines")
     .getByText("calculateTotal", { exact: true })
     .last();
-  await call.click();
+  await call.click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1203,7 +1203,7 @@ test("loads JS dependencies on demand beyond 2000 unrelated files and only on re
     "Índice de JS/TS parcial",
   );
   await page.getByRole("button", { name: "Fechar prévia" }).click();
-  await call.click();
+  await call.click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1224,7 +1224,7 @@ test("follows re-exports and terminates circular dependency graphs", async ({
     .locator(".monaco-diff-editor .editor.modified .view-lines")
     .getByText("calculateTotal", { exact: true })
     .last()
-    .click();
+    .click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1757,7 +1757,7 @@ test("type attention uses inferred unions and usages carry local review states",
     .locator(".editor.modified .view-lines")
     .getByText("calculateTotal", { exact: true })
     .last()
-    .click();
+    .click({ modifiers: ["Alt"] });
   await page
     .getByRole("button", { name: "Prévia da definição", exact: false })
     .click();
@@ -1834,18 +1834,54 @@ test("comment drag from diff signs selects whole lines without selecting text", 
   await page.getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(form).toHaveCount(0);
   await expect(editor).not.toHaveClass(/comment-line-dragging/);
-  // Ordinary selection inside code still works for copying.
+  // Alt keeps text selection available for copying.
   const line = await editor
     .locator(".view-line")
     .filter({ hasText: "const line1" })
     .first()
     .boundingBox();
+  await page.keyboard.down("Alt");
   await page.mouse.move(line!.x + 10, line!.y + line!.height / 2);
   await page.mouse.down();
   await page.mouse.move(line!.x + 150, line!.y + line!.height / 2, {
     steps: 5,
   });
   await page.mouse.up();
+  await page.keyboard.up("Alt");
   await expect(editor.locator(".selected-text")).not.toHaveCount(0);
   await expect(form).toHaveCount(0);
+});
+
+test("whole code lines highlight on hover and drag to compose comments", async ({
+  page,
+}) => {
+  await open(page);
+  for (const side of ["modified", "original"]) {
+    const editor = page.locator(`.editor.${side}`);
+    const lines = editor.locator(".view-line");
+    const first = lines.filter({ hasText: /^const\sline1\s=/ });
+    const last = lines.filter({ hasText: /^const\sline3\s=/ });
+    await first.hover();
+    await expect(editor.locator(".comment-line-hover")).toHaveCount(1);
+    const a = await first.boundingBox(),
+      b = await last.boundingBox();
+    await page.mouse.move(a!.x + 100, a!.y + a!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b!.x + 180, b!.y + b!.height / 2, { steps: 8 });
+    await expect(editor.locator(".selected-text")).toHaveCount(0);
+    await expect(editor.locator(".comment-range-selection")).not.toHaveCount(0);
+    await page.mouse.up();
+    const form = page.getByRole("region", {
+      name: "Comentário nas linhas selecionadas",
+    });
+    await expect(form).toContainText(
+      `${side === "modified" ? "head" : "base"} · linhas 4–6`,
+    );
+    await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await first.click();
+    await expect(form).toContainText(
+      `${side === "modified" ? "head" : "base"} · linha 4`,
+    );
+    await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+  }
 });

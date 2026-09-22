@@ -133,7 +133,7 @@ export function CodeEditor({
                 glyphMarginClassName: "comment-add-glyph",
                 glyphMarginHoverMessage: {
                   value:
-                    "Adicionar comentário local. Arraste o + para selecionar várias linhas.",
+                    "Clique ou arraste pela linha para comentar. Alt + arraste seleciona texto; Cmd/Ctrl + clique navega.",
                 },
               },
             })),
@@ -176,14 +176,23 @@ export function CodeEditor({
             event.clientX,
             event.clientY,
           );
+          if (event.altKey && event.button === 0 && target?.position) {
+            ed.focus();
+            ed.setPosition(target.position);
+          }
           if (
             !target?.position ||
             event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.altKey ||
             !allowed(target.position.lineNumber) ||
             ![
               monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
               monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
               monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
+              monaco.editor.MouseTargetType.CONTENT_TEXT,
+              monaco.editor.MouseTargetType.CONTENT_EMPTY,
             ].includes(target.type)
           )
             return;
@@ -225,14 +234,23 @@ export function CodeEditor({
             if (!drag) hover.clear();
           }),
           ed.onMouseMove((e) => {
+            if (drag) return;
             const n = e.target.position?.lineNumber;
+            const content = [
+              monaco.editor.MouseTargetType.CONTENT_TEXT,
+              monaco.editor.MouseTargetType.CONTENT_EMPTY,
+              monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+              monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+              monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
+            ].includes(e.target.type);
             hover.set(
-              n && allowed(n)
+              content && n && allowed(n)
                 ? [
                     {
                       range: new monaco.Range(n, 1, n, 1),
                       options: {
                         glyphMarginClassName: "comment-glyph-hover",
+                        className: "comment-line-hover",
                         isWholeLine: true,
                       },
                     },

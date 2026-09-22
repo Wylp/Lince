@@ -88,6 +88,23 @@ export const ReviewComments = forwardRef<
     };
   }, [snapshot.id]);
   useEffect(() => {
+    const cancel = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        !busy &&
+        target &&
+        event.target instanceof Node &&
+        host?.contains(event.target)
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setTarget(null);
+      }
+    };
+    window.addEventListener("keydown", cancel, true);
+    return () => window.removeEventListener("keydown", cancel, true);
+  }, [host, busy, target]);
+  useEffect(() => {
     onTarget(target);
   }, [target, onTarget]);
   useEffect(() => {
