@@ -25,6 +25,8 @@ Cole uma URL `https://github.com/owner/repo/pull/123`. Selecione arquivos na ár
 
 Ao abrir ou atualizar uma PR, um stepper mostra a consulta ao GitHub, preparação de base/head, organização da árvore e cálculo dos diffs. Cada etapa explica o trabalho em andamento e exibe o tempo decorrido. O editor, histórico, listagem e arquivos também têm indicadores próprios de carregamento.
 
+No diff, o mapa na borda direita indica onde estão as alterações no arquivo inteiro: verde para adições e vermelho para remoções. Clique no mapa para navegar ou use as setas ao lado do contador de alterações para saltar entre trechos. A posição de leitura continua preservada ao trocar de arquivo.
+
 `npm run dev` abre somente o frontend para desenvolvimento: a integração com `gh` depende do aplicativo desktop. Não há modo de demonstração ativado em produção.
 
 Pré-requisitos por plataforma:

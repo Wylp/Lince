@@ -74,7 +74,7 @@ export function CodeEditor({
           renderSideBySide: true,
           enableSplitViewResizing: true,
           hideUnchangedRegions: { enabled: false },
-          renderOverviewRuler: false,
+          renderOverviewRuler: true,
           diffAlgorithm: "advanced",
           maxComputationTime: 5000,
           accessibilityVerbose: true,

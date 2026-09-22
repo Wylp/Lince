@@ -43,6 +43,8 @@ monaco.editor.defineTheme("lince", {
     "diffEditor.removedTextBackground": "#c2595e30",
     "diffEditor.insertedLineBackground": "#18412b45",
     "diffEditor.removedLineBackground": "#522a3035",
+    "diffEditorOverview.insertedForeground": "#75d99b",
+    "diffEditorOverview.removedForeground": "#ef858b",
     "peekViewEditor.background": "#142019",
     "peekView.border": "#71c78e",
   },

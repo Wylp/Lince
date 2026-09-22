@@ -304,7 +304,7 @@ test.beforeEach(async ({ page }) => {
                 ? "import './utils';\nexport function calculateTotal(value: number) { return value * 10; }\n"
                 : "export {};\n") +
           Array.from(
-            { length: 200 },
+            { length: win.diffNavigationFixture ? 2000 : 200 },
             (_, i) => `const line${i} = "${path}";`,
           ).join("\n");
         if (command === "get_pr_files")
@@ -318,7 +318,12 @@ test.beforeEach(async ({ page }) => {
                   before:
                     f.status === "added"
                       ? ""
-                      : textFor(f.path).replace("* 10", "* 5"),
+                      : win.diffNavigationFixture &&
+                          f.path === "src/controller.ts"
+                        ? textFor(f.path)
+                            .replace("const line400 =", "const previous400 =")
+                            .replace("const line1600 =", "const previous1600 =")
+                        : textFor(f.path).replace("* 10", "* 5"),
                   after: f.path.endsWith(".png") ? null : textFor(f.path),
                   diff: {
                     patch: f.path.endsWith(".png")
@@ -2038,4 +2043,47 @@ test("file multiselection supports Cmd Ctrl Shift and bulk context actions", asy
   await expect(page.getByRole("menu")).toContainText(
     "1 arquivos alterados na seleção",
   );
+});
+
+test("finds distant small diffs with overview and change navigation", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).diffNavigationFixture = true;
+  });
+  await open(page);
+  const navigation = page.getByRole("group", {
+    name: "Navegar pelas alterações",
+  });
+  await expect(navigation).toContainText("2 alterações");
+  await expect(page.locator(".diffOverview")).toBeVisible();
+  const pane = page.locator('[data-testid="diff-editor"] .editor.modified');
+  await page
+    .getByRole("button", { name: "Próxima alteração", exact: true })
+    .click();
+  await expect(navigation).toContainText("1 de 2 alterações");
+  await expect(
+    pane.locator(".view-line").filter({ hasText: "const line400 =" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Próxima alteração", exact: true })
+    .click();
+  await expect(navigation).toContainText("2 de 2 alterações");
+  await expect(
+    pane.locator(".view-line").filter({ hasText: "const line1600 =" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Alteração anterior", exact: true })
+    .click();
+  await expect(navigation).toContainText("1 de 2 alterações");
+  await expect(
+    pane.locator(".view-line").filter({ hasText: "const line400 =" }),
+  ).toBeVisible();
+  const files = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await files.getByRole("button", { name: /service.ts/ }).click();
+  await expect(navigation).toContainText("1 alteração");
+  await files.getByRole("button", { name: /controller.ts/ }).click();
+  await expect(
+    pane.locator(".view-line").filter({ hasText: "const line400 =" }),
+  ).toBeVisible();
 });

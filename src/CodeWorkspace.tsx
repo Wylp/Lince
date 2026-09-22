@@ -22,6 +22,7 @@ import {
 } from "./editor";
 import type { Document, Location, RepoIndex, Side } from "./editor";
 import { CodeEditor } from "./CodeEditor";
+import { DiffNavigation } from "./DiffNavigation";
 import type { EditorHandle } from "./CodeEditor";
 import { FileTree } from "./FileTree";
 import { RepositoryTree } from "./RepositoryTree";
@@ -60,6 +61,10 @@ export default function CodeWorkspace({
 }) {
   const [insightEditor, setInsightEditor] =
     useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [diffNavigation, setDiffNavigation] = useState<{
+    key: string;
+    diff: monaco.editor.IStandaloneDiffEditor;
+  } | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
     new Set([review.selected]),
   );
@@ -844,6 +849,9 @@ export default function CodeWorkspace({
           </div>
         )}
         <div className="code-toolbar">
+          {tab.mode === "diff" && diffNavigation?.key === key(tab) && (
+            <DiffNavigation diff={diffNavigation.diff} />
+          )}
           <button
             aria-label="Voltar na navegação"
             disabled={focusMode || cursor.current <= 0}
@@ -972,6 +980,9 @@ export default function CodeWorkspace({
             onReady={(h) => {
               handle.current = h;
               setInsightEditor(h.editor);
+              setDiffNavigation(
+                h.diff ? { key: key(tab), diff: h.diff } : null,
+              );
               for (const editor of [
                 h.editor,
                 ...(h.diff ? [h.diff.getOriginalEditor()] : []),

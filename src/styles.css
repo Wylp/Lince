@@ -1786,6 +1786,26 @@ progress::-webkit-progress-value {
   margin-left: 4px;
   color: #6c8977;
 }
+.diff-navigation {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  padding-right: 8px;
+  border-right: 1px solid #345341;
+  color: #b4e5c7;
+  white-space: nowrap;
+}
+.code-toolbar .diff-navigation button {
+  background: #233b2c;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 14px;
+}
+.code-toolbar .diff-navigation button:hover:enabled {
+  background: #365a43;
+  color: #fff;
+}
 .definition-dialog {
   width: min(1000px, 90vw);
   height: 72vh;
