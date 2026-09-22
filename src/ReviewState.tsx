@@ -7,6 +7,7 @@ export type ReviewContextHandler = (
   folder: boolean,
 ) => void;
 export interface ReviewContextTarget {
+  paths?: string[];
   path: string;
   folder: boolean;
   x: number;
@@ -75,6 +76,7 @@ export function ReviewContextMenu({
   decisionsOnly?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const batch = target.folder || (target.paths?.length ?? 0) > 1;
   useLayoutEffect(() => {
     const el = root.current!;
     el.style.left = `${Math.max(8, Math.min(target.x, window.innerWidth - el.offsetWidth - 8))}px`;
@@ -135,11 +137,17 @@ export function ReviewContextMenu({
         }
       }}
     >
-      <div className="review-context-title">{target.path}</div>
+      <div className="review-context-title">
+        {!target.folder && batch
+          ? `${target.paths!.length} arquivos selecionados`
+          : target.path}
+      </div>
       <p>
         {target.folder
           ? `${count} arquivos alterados nesta pasta`
-          : "Estado local da revisão"}
+          : batch
+            ? `${count} arquivos alterados na seleção`
+            : "Estado local da revisão"}
       </p>
       {(
         [
@@ -158,9 +166,7 @@ export function ReviewContextMenu({
           }}
         >
           {label}
-          {target.folder
-            ? ` (${decision === "notRead" ? count : viewable})`
-            : ""}
+          {batch ? ` (${decision === "notRead" ? count : viewable})` : ""}
         </button>
       ))}
       {!decisionsOnly && (
@@ -173,7 +179,7 @@ export function ReviewContextMenu({
               finish();
             }}
           >
-            ✓ Marcar como visto{target.folder ? ` (${viewable})` : ""}
+            ✓ Marcar como visto{batch ? ` (${viewable})` : ""}
           </button>
           {!target.folder && (
             <button

@@ -2861,3 +2861,51 @@ progress::-webkit-progress-value {
   flex: 0 0 27px;
   padding: 4px;
 }
+.saved-comment-card {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px 14px;
+  background: #111b17;
+  border: 1px solid #42664d;
+  border-left: 2px solid #a6e5b9;
+  border-radius: 6px;
+  color: #d3e6da;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+  white-space: normal;
+}
+.saved-comment-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.saved-comment-card header span,
+.saved-comment-card small {
+  font-size: 11px;
+  color: #a3b4a8;
+}
+.saved-comment-card button {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid #42664d;
+  background: #23392b;
+  color: #d3e6da;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.saved-comment-body {
+  max-height: 280px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+.file-item[aria-pressed="true"] {
+  background: #244635;
+  box-shadow: inset 2px 0 #a6e5b9;
+}
+.file-item {
+  user-select: none;
+  -webkit-user-select: none;
+}

@@ -15,14 +15,16 @@ export function RepositoryTree({
   context,
   progress,
   folders,
+  selection,
 }: {
   paths: string[];
   selected: string;
-  open: (path: string) => void;
+  open: (path: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   changed: Set<string>;
   context: ReviewContextHandler;
   progress: ReviewProgress;
   folders: Map<string, ReviewSummary>;
+  selection: Set<string>;
 }) {
   const tree = useMemo(() => {
     const root: Node = { dirs: new Map(), files: [] };
@@ -82,7 +84,9 @@ export function RepositoryTree({
             <button
               className={`file-item ${selected === path ? "selected" : ""}`}
               title={path}
-              onClick={() => open(path)}
+              onClick={(e) => open(path, e)}
+              data-file-path={path}
+              aria-pressed={selection.has(path)}
               onKeyDown={(e) => contextKey(e, path, false, context)}
               onContextMenu={(e) => context(e, path, false)}
             >

@@ -1,4 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { MarkdownPreview } from "./MarkdownComposer";
+import type { DraftComment } from "./ReviewComments";
 import { monaco, options } from "./editor";
 import { selectedLines } from "./comment-lines";
 import type { CommentRanges, LineRange } from "./comment-lines";
@@ -19,6 +22,7 @@ export function CodeEditor({
   draftRanges,
   inlineTarget,
   onCommentHost,
+  onEditDraft,
 }: {
   model: monaco.editor.ITextModel;
   original?: monaco.editor.ITextModel;
@@ -31,9 +35,14 @@ export function CodeEditor({
   onComment?: (side: "LEFT" | "RIGHT", range: LineRange) => void;
   inlineTarget?: ({ side: "LEFT" | "RIGHT" } & LineRange) | null;
   onCommentHost?: (host: HTMLElement | null) => void;
-  draftRanges?: { side: "LEFT" | "RIGHT"; startLine: number; line: number }[];
+  draftRanges?: DraftComment[];
+  onEditDraft?: (id: string) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const [savedHosts, setSavedHosts] = useState<
+    { comment: DraftComment; host: HTMLElement }[]
+  >([]);
+  const savedKey = JSON.stringify(draftRanges ?? []);
   const callbacks = useRef({
     onScroll,
     onReady,
@@ -168,7 +177,7 @@ export function CodeEditor({
           if (
             event.target instanceof Element &&
             event.target.closest(
-              ".codicon-folding-expanded, .codicon-folding-collapsed, .inline-comment-form",
+              ".codicon-folding-expanded, .codicon-folding-collapsed, .inline-comment-form, .saved-comment-card",
             )
           )
             return;
@@ -384,11 +393,64 @@ export function CodeEditor({
       highlight.clear();
       ed.changeViewZones((accessor) => accessor.removeZone(id));
       ed.setScrollTop(previousTop, monaco.editor.ScrollType.Immediate);
-      container?.classList.remove("comment-view-zones");
-      if (hidden != null) container?.setAttribute("aria-hidden", hidden);
+      if (!container?.querySelector(".saved-comment-zone")) {
+        container?.classList.remove("comment-view-zones");
+        if (hidden != null) container?.setAttribute("aria-hidden", hidden);
+      }
       callbacks.current.onCommentHost?.(null);
     };
   }, [inlineTarget, model, original, line, column]);
+  useEffect(() => {
+    const hosts: { comment: DraftComment; host: HTMLElement }[] = [];
+    const cleanup: (() => void)[] = [];
+    for (const { editor: ed, side } of editors.current) {
+      for (const comment of (JSON.parse(savedKey) as DraftComment[]).filter(
+        (c) => c.side === side,
+      )) {
+        const node = document.createElement("div");
+        node.className = "saved-comment-zone";
+        const host = document.createElement("div");
+        node.appendChild(host);
+        const zone: monaco.editor.IViewZone = {
+          afterLineNumber: comment.line,
+          ordinal: 1,
+          heightInPx: 100,
+          domNode: node,
+          suppressMouseDown: false,
+        };
+        let id = "";
+        ed.changeViewZones((accessor) => {
+          id = accessor.addZone(zone);
+        });
+        const container = node.parentElement;
+        container?.removeAttribute("aria-hidden");
+        container?.classList.add("comment-view-zones");
+        const observer = new ResizeObserver(() => {
+          const height = Math.ceil(host.getBoundingClientRect().height) + 12;
+          if (height > 12 && height !== zone.heightInPx) {
+            zone.heightInPx = height;
+            ed.changeViewZones((a) => a.layoutZone(id));
+          }
+        });
+        observer.observe(host);
+        hosts.push({ comment, host });
+        cleanup.push(() => {
+          observer.disconnect();
+          ed.changeViewZones((a) => a.removeZone(id));
+          if (
+            !container?.querySelector(
+              ".inline-comment-zone, .saved-comment-zone",
+            )
+          ) {
+            container?.classList.remove("comment-view-zones");
+            container?.setAttribute("aria-hidden", "true");
+          }
+        });
+      }
+    }
+    setSavedHosts(hosts);
+    return () => cleanup.forEach((fn) => fn());
+  }, [savedKey, model, original, line, column]);
   useEffect(() => {
     draftDecorations.current.forEach((d) => d.clear());
     draftDecorations.current = editors.current.map(({ editor, side }) =>
@@ -410,10 +472,40 @@ export function CodeEditor({
     );
   }, [draftRanges, model, original]);
   return (
-    <div
-      className="code-editor"
-      ref={root}
-      data-testid={original ? "diff-editor" : "source-editor"}
-    />
+    <>
+      {savedHosts.map(({ comment, host }) =>
+        createPortal(
+          <section
+            className="saved-comment-card"
+            aria-label={`Comentário salvo: ${comment.side === "LEFT" ? "base" : "head"} · linhas ${comment.startLine}–${comment.line}`}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <header>
+              <strong>Comentário</strong>
+              <span>
+                {comment.side === "LEFT" ? "base" : "head"} ·{" "}
+                {comment.startLine === comment.line
+                  ? `linha ${comment.line}`
+                  : `linhas ${comment.startLine}–${comment.line}`}
+              </span>
+              <button onClick={() => onEditDraft?.(comment.id)}>
+                Editar comentário salvo
+              </button>
+            </header>
+            <div className="saved-comment-body">
+              <MarkdownPreview body={comment.body} />
+            </div>
+            <small>Rascunho local · pendente de Aplicar tudo</small>
+          </section>,
+          host,
+          comment.id,
+        ),
+      )}
+      <div
+        className="code-editor"
+        ref={root}
+        data-testid={original ? "diff-editor" : "source-editor"}
+      />
+    </>
   );
 }

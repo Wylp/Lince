@@ -60,6 +60,10 @@ export default function CodeWorkspace({
 }) {
   const [insightEditor, setInsightEditor] =
     useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
+    new Set([review.selected]),
+  );
+  const selectionAnchor = useRef(review.selected);
   const focusEnabled = useRef(focusMode);
   focusEnabled.current = focusMode;
   const focusPath = useRef(review.selected);
@@ -89,9 +93,18 @@ export default function CodeWorkspace({
       );
       return;
     }
+    const paths =
+      !folder && !focusEnabled.current && selectedFiles.has(path)
+        ? [...selectedFiles]
+        : [path];
+    if (!folder && !selectedFiles.has(path)) {
+      setSelectedFiles(new Set([path]));
+      selectionAnchor.current = path;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     setContextTarget({
       path,
+      paths: folder ? undefined : paths,
       folder,
       x: ("clientX" in event && event.clientX) || rect.left + 24,
       y: ("clientY" in event && event.clientY) || rect.top + 20,
@@ -152,6 +165,8 @@ export default function CodeWorkspace({
       );
       return;
     }
+    setSelectedFiles(new Set([next.path]));
+    selectionAnchor.current = next.path;
     previewRequest.current++;
     setPreviewLoading(false);
     setTab(next);
@@ -169,6 +184,54 @@ export default function CodeWorkspace({
     }
     redraw((n) => n + 1);
   }
+  function selectFile(
+    path: string,
+    event: React.MouseEvent<HTMLButtonElement>,
+    next: Tab,
+  ) {
+    if (!(event.shiftKey || event.metaKey || event.ctrlKey)) {
+      navigate(next);
+      return;
+    }
+    event.preventDefault();
+    if (focusEnabled.current) {
+      setMessage("A seleção múltipla está desativada no modo foco.");
+      return;
+    }
+    const additive = event.metaKey || event.ctrlKey;
+    const selected = additive ? new Set(selectedFiles) : new Set<string>();
+    if (event.shiftKey) {
+      const visible = [
+        ...(event.currentTarget
+          .closest("nav")
+          ?.querySelectorAll<HTMLButtonElement>("button[data-file-path]") ??
+          []),
+      ]
+        .filter((el) => el.getClientRects().length > 0)
+        .map((el) => el.dataset.filePath!);
+      const a = visible.indexOf(selectionAnchor.current),
+        b = visible.indexOf(path);
+      if (a >= 0 && b >= 0)
+        visible
+          .slice(Math.min(a, b), Math.max(a, b) + 1)
+          .forEach((p) => selected.add(p));
+      else selected.add(path);
+    } else {
+      selected.has(path) ? selected.delete(path) : selected.add(path);
+      selectionAnchor.current = path;
+    }
+    setSelectedFiles(selected);
+  }
+  const selectionScope = useRef("");
+  useEffect(() => {
+    const scope = JSON.stringify([filter, pending, tree, side]);
+    const previous = selectionScope.current;
+    selectionScope.current = scope;
+    if (!previous || previous === scope) return;
+    setSelectedFiles(new Set());
+    selectionAnchor.current = "";
+    setContextTarget(null);
+  }, [filter, pending, tree, side]);
   navigateRef.current = navigate;
   useEffect(() => {
     if (!focusMode || !project) return;
@@ -427,7 +490,7 @@ export default function CodeWorkspace({
     ? snapshot.files.filter((f) =>
         contextTarget.folder
           ? f.path.startsWith(contextTarget.path)
-          : f.path === contextTarget.path,
+          : (contextTarget.paths ?? [contextTarget.path]).includes(f.path),
       )
     : [];
   const contextViewable = contextFiles.filter(
@@ -591,30 +654,38 @@ export default function CodeWorkspace({
             {tree === "changes" ? (
               <FileTree
                 files={changedPaths}
+                selection={selectedFiles}
                 context={context}
                 folders={folders}
                 progress={{
                   ...review,
                   selected: tab.mode === "diff" ? tab.path : "",
                 }}
-                select={(path) =>
-                  navigate({ path, side: "head", mode: "diff" })
+                select={(path, event) =>
+                  selectFile(path, event, { path, side: "head", mode: "diff" })
                 }
               />
             ) : (
               <RepositoryTree
                 paths={repoPaths}
+                selection={selectedFiles}
                 context={context}
                 folders={folders}
                 progress={review}
                 selected={tab.path}
                 changed={changed}
-                open={(path) => navigate({ path, side, mode: "code" })}
+                open={(path, event) =>
+                  selectFile(path, event, { path, side, mode: "code" })
+                }
               />
             )}
           </div>
           <div className="sidebar-footer">
-            <span>Somente leitura</span>
+            <span>
+              {selectedFiles.size > 1
+                ? `${selectedFiles.size} arquivos selecionados`
+                : "Somente leitura"}
+            </span>
             <button
               disabled={focusMode}
               onClick={() => {
@@ -882,6 +953,7 @@ export default function CodeWorkspace({
                 : null
             }
             onCommentHost={setCommentHost}
+            onEditDraft={(id) => comments.current?.edit(id)}
             draftRanges={
               tab.mode === "diff"
                 ? drafts.filter((d) => d.path === tab.path)
@@ -937,7 +1009,11 @@ export default function CodeWorkspace({
                 ? "Cmd/Ctrl+clique · declarações candidatas por sintaxe"
                 : "Destaque de sintaxe"}
           </span>
-          <span>Somente leitura</span>
+          <span>
+            {selectedFiles.size > 1
+              ? `${selectedFiles.size} arquivos selecionados`
+              : "Somente leitura"}
+          </span>
         </footer>
       </main>
       {!!peek.length && peekModel && (

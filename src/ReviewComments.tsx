@@ -29,6 +29,7 @@ interface Draft {
 }
 export interface CommentsHandle {
   compose: (target: CommentTarget) => void;
+  edit: (id: string) => void;
   hasUnsaved: () => boolean;
 }
 const empty: Draft = {
@@ -113,6 +114,27 @@ export const ReviewComments = forwardRef<
   }, [listOpen]);
   useImperativeHandle(ref, () => ({
     hasUnsaved: () => !!target && (!!body.trim() || busy),
+    edit: (id) => {
+      if (busy) return;
+      if (target && body.trim()) {
+        setError(
+          "Salve ou cancele o comentário em edição antes de editar outro.",
+        );
+        onTarget(target);
+        return;
+      }
+      if (!loaded || stale || locked) {
+        setListOpen(true);
+        return;
+      }
+      const comment = draft.comments.find((c) => c.id === id);
+      if (!comment) return;
+      setListOpen(false);
+      setEditing(id);
+      setTarget(comment);
+      setBody(comment.body);
+      setError("");
+    },
     compose: (value) => {
       if (busy) return;
       if (target && body.trim()) {

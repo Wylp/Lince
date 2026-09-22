@@ -27,12 +27,14 @@ export function FileTree({
   select,
   context,
   folders,
+  selection,
 }: {
   files: ChangedFile[];
   progress: ReviewProgress;
-  select: (path: string) => void;
+  select: (path: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   context: ReviewContextHandler;
   folders: Map<string, ReviewSummary>;
+  selection: Set<string>;
 }) {
   function branch(node: Node, prefix = ""): React.ReactNode {
     return (
@@ -68,7 +70,9 @@ export function FileTree({
               aria-current={
                 progress.selected === file.path ? "true" : undefined
               }
-              onClick={() => select(file.path)}
+              onClick={(e) => select(file.path, e)}
+              data-file-path={file.path}
+              aria-pressed={selection.has(file.path)}
               onKeyDown={(e) => contextKey(e, file.path, false, context)}
               onContextMenu={(e) => context(e, file.path, false)}
               title={`${file.path} · ${statusLabels[file.status] ?? file.status}${progress.files[file.path]?.reviewed ? " · Revisado" : progress.files[file.path]?.approvedUnread ? " · Aprovado sem ler" : ""}`}

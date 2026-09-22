@@ -1940,3 +1940,102 @@ test("Markdown toolbar, preview and saved drafts preserve GFM safely", async ({
     [],
   );
 });
+
+test("saved comments stay inline across navigation and reload and can be edited", async ({
+  page,
+}) => {
+  await open(page);
+  await page.locator(".editor.modified .comment-add-glyph").nth(1).click();
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("**Comentário persistente**");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  const card = page.getByRole("region", {
+    name: "Comentário salvo: head · linhas 2–2",
+    exact: true,
+  });
+  await expect(card).toBeVisible();
+  await expect(card.locator("strong").last()).toHaveText(
+    "Comentário persistente",
+  );
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  await tree.getByRole("button", { name: /service.ts/ }).click();
+  await expect(card).toHaveCount(0);
+  await tree.getByRole("button", { name: /controller.ts/ }).click();
+  await expect(card).toBeVisible();
+  await page.reload();
+  await open(page);
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "Editar comentário salvo" }).click();
+  await expect(page.getByLabel("Comentário da revisão")).toHaveValue(
+    "**Comentário persistente**",
+  );
+  await page
+    .getByLabel("Comentário da revisão")
+    .fill("**Comentário atualizado**");
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("Comentário atualizado");
+  await expect(
+    page.getByRole("button", { name: "Comentários (1)", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+  await page.screenshot({
+    path: `test-results/saved-comment-${test.info().project.name}.png`,
+  });
+});
+
+test("file multiselection supports Cmd Ctrl Shift and bulk context actions", async ({
+  page,
+}) => {
+  await open(page);
+  const tree = page.getByRole("navigation", { name: "Arquivos alterados" });
+  const controller = tree.getByRole("button", { name: /controller.ts/ });
+  const service = tree.getByRole("button", { name: /service.ts/ });
+  const image = tree.getByRole("button", { name: /image.png/ });
+  await controller.click();
+  await service.click({ modifiers: ["Meta"] });
+  await expect(controller).toHaveAttribute("aria-pressed", "true");
+  await expect(service).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".file-heading")).toContainText("controller.ts");
+  await service.click({ button: "right" });
+  await expect(page.getByRole("menu")).toContainText("2 arquivos selecionados");
+  await page
+    .getByRole("menuitem", { name: "Concordo (2)", exact: true })
+    .click();
+  await expect(
+    controller.getByLabel("Concordo", { exact: true }),
+  ).toBeVisible();
+  await expect(service.getByLabel("Concordo", { exact: true })).toBeVisible();
+  await service.click({ modifiers: ["Meta"] });
+  await expect(service).toHaveAttribute("aria-pressed", "false");
+  // macOS maps native Ctrl+click to its context menu. Exercise the Windows/Linux modifier on the handler.
+  await service.dispatchEvent("click", { ctrlKey: true });
+  await expect(service).toHaveAttribute("aria-pressed", "true");
+  await controller.click();
+  await image.click({ modifiers: ["Shift"] });
+  await expect(tree.locator('[aria-pressed="true"]')).toHaveCount(3);
+  await image.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Não li (3)", exact: true }).click();
+  await expect(image.getByLabel("Não li", { exact: true })).toBeVisible();
+  await page.getByLabel("Filtrar arquivos").fill("controller");
+  await expect(tree.locator('[aria-pressed="true"]')).toHaveCount(0);
+  await page.getByLabel("Filtrar arquivos").fill("");
+  await page.getByRole("button", { name: "Explorador", exact: true }).click();
+  const repo = page.getByRole("navigation", {
+    name: "Arquivos do repositório",
+  });
+  await repo.getByRole("button", { name: /controller.ts/ }).click();
+  await repo
+    .getByRole("button", { name: /utils.ts/ })
+    .click({ modifiers: ["Meta"] });
+  await expect(repo.locator('[aria-pressed="true"]')).toHaveCount(2);
+  await repo
+    .getByRole("button", { name: /utils.ts/ })
+    .click({ button: "right" });
+  await expect(page.getByRole("menu")).toContainText(
+    "1 arquivos alterados na seleção",
+  );
+});
