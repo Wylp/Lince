@@ -1885,3 +1885,58 @@ test("whole code lines highlight on hover and drag to compose comments", async (
     await page.getByRole("button", { name: "Cancelar", exact: true }).click();
   }
 });
+
+test("Markdown toolbar, preview and saved drafts preserve GFM safely", async ({
+  page,
+}) => {
+  await open(page);
+  await page.locator(".editor.modified .comment-add-glyph").nth(1).click();
+  const area = page.getByLabel("Comentário da revisão");
+  await area.fill("importante");
+  await area.press("Meta+a");
+  await page.getByRole("button", { name: "Negrito", exact: true }).click();
+  await expect(area).toHaveValue("**importante**");
+  await page.getByRole("button", { name: "Desfazer", exact: true }).click();
+  await expect(area).toHaveValue("importante");
+  await page.getByRole("button", { name: "Refazer", exact: true }).click();
+  await expect(area).toHaveValue("**importante**");
+  await area.press("Meta+a");
+  await area.press("Meta+i");
+  await expect(area).toHaveValue("_**importante**_");
+  const markdown =
+    "## Revisão\n\n**Correto** e ~~antigo~~\n\n- [x] Conferido\n- [ ] Pendente\n\n| Nome | Valor |\n| --- | --- |\n| teste | 42 |\n\n```ts\nconst value = 42;\n```\n\n[Link](https://github.com)\n\n[ruim](javascript:alert(1))\n\n<script>window.markdownExecuted = true</script>";
+  await area.fill(markdown);
+  await page.getByRole("tab", { name: "Prévia", exact: true }).click();
+  const preview = page.getByLabel("Prévia do comentário", { exact: true });
+  await expect(preview.getByRole("heading", { name: "Revisão" })).toBeVisible();
+  await expect(preview.locator("strong")).toHaveText("Correto");
+  await expect(preview.locator("del")).toHaveText("antigo");
+  await expect(preview.getByRole("table")).toContainText("42");
+  await expect(preview.getByRole("checkbox").first()).toBeChecked();
+  await expect(preview.locator("pre code")).toContainText("const value = 42");
+  await expect(preview.locator('a[href^="javascript:"]')).toHaveCount(0);
+  await expect(preview.locator("script")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => (window as any).markdownExecuted),
+  ).toBeUndefined();
+  await page.screenshot({
+    path: `test-results/markdown-preview-${test.info().project.name}.png`,
+  });
+  await page.getByRole("tab", { name: "Escrever", exact: true }).click();
+  await expect(area).toHaveValue(markdown);
+  await page.screenshot({
+    path: `test-results/markdown-write-${test.info().project.name}.png`,
+  });
+  await page.getByRole("button", { name: "Salvar rascunho" }).click();
+  await page
+    .getByRole("button", { name: "Comentários (1)", exact: true })
+    .click();
+  await expect(page.getByRole("dialog").getByRole("table")).toContainText("42");
+  await page
+    .getByRole("button", { name: "Editar comentário 1", exact: true })
+    .click();
+  await expect(area).toHaveValue(markdown);
+  expect(await page.evaluate(() => (window as any).submissions ?? [])).toEqual(
+    [],
+  );
+});

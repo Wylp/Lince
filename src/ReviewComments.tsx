@@ -1,3 +1,4 @@
+import { MarkdownComposer, MarkdownPreview } from "./MarkdownComposer";
 import { createPortal } from "react-dom";
 import {
   forwardRef,
@@ -93,8 +94,8 @@ export const ReviewComments = forwardRef<
         event.key === "Escape" &&
         !busy &&
         target &&
-        event.target instanceof Node &&
-        host?.contains(event.target)
+        document.querySelector(".inline-comment-form") &&
+        !document.querySelector("dialog[open]")
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -103,7 +104,7 @@ export const ReviewComments = forwardRef<
     };
     window.addEventListener("keydown", cancel, true);
     return () => window.removeEventListener("keydown", cancel, true);
-  }, [host, busy, target]);
+  }, [busy, target]);
   useEffect(() => {
     onTarget(target);
   }, [target, onTarget]);
@@ -174,30 +175,21 @@ export const ReviewComments = forwardRef<
           <section
             className="inline-comment-form"
             aria-label="Comentário nas linhas selecionadas"
-            onKeyDownCapture={(e) => {
+            onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Escape" && !busy) setTarget(null);
             }}
           >
-            <h3>{editing ? "Editar rascunho" : "Novo comentário"}</h3>
-            <p className="comment-location">{location(target)}</p>
-            <p className="muted">
-              Ao salvar, o rascunho fica neste dispositivo. Nada será enviado
-              até você clicar em Aplicar tudo.
-            </p>
-            <label>
-              Comentário
-              <textarea
-                autoFocus
-                aria-label="Comentário da revisão"
-                value={body}
-                disabled={busy}
-                onChange={(e) => setBody(e.target.value)}
-                maxLength={16000}
-              />
-            </label>
+            <header className="comment-composer-heading">
+              <h3>{editing ? "Editar rascunho" : "Novo comentário"}</h3>
+              <span className="comment-location">{location(target)}</span>
+            </header>
+            <MarkdownComposer value={body} onChange={setBody} disabled={busy} />
             {error && <p role="alert">{error}</p>}
             <footer>
+              <small className="muted">
+                Rascunho local · envio em Aplicar tudo
+              </small>
               <button disabled={busy} onClick={() => setTarget(null)}>
                 Cancelar
               </button>
@@ -278,7 +270,7 @@ export const ReviewComments = forwardRef<
             {draft.comments.map((c, i) => (
               <article key={c.id}>
                 <strong>{location(c)}</strong>
-                <p className="draft-body">{c.body}</p>
+                <MarkdownPreview body={c.body} />
                 <div>
                   <button
                     disabled={busy || stale || locked}

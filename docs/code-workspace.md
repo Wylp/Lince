@@ -101,3 +101,9 @@ Usos e revisão consulta referências semânticas do símbolo sob o cursor, excl
 Os resultados mostram revisão por arquivo, não por ocorrência. Concordo/Discordo contam como leitura, mas discordâncias continuam explícitas. Não li e Aprovado sem ler não contam como leitura. Arquivos fora do diff não são considerados revisados; ocorrências na base não herdam estado do head. No modo foco, o painel pode ser consultado, mas a navegação para outro arquivo continua bloqueada.
 
 Essa análise semântica inicialmente suporta JS/TS; as oito outras linguagens continuam com navegação por candidatos sintáticos, sem inferência de tipos ou rastreamento confiável de usos.
+
+## Markdown nos comentários
+
+O editor inline oferece Escrever/Prévia, formatação da seleção, listas, citações, links, imagens por URL, tabelas, menções, referências e blocos de sugestão. Cmd/Ctrl+B/I/K formata; Cmd/Ctrl+Z desfaz e Shift+Cmd/Ctrl+Z refaz nesta sessão de edição. O texto original é salvo e publicado sem transformação. A lista de rascunhos também renderiza o Markdown.
+
+A prévia é local com [react-markdown](https://github.com/remarkjs/react-markdown), [remark-gfm](https://github.com/remarkjs/remark-gfm) e remark-breaks. GFM cobre tabelas, tarefas, tachado, autolinks e notas de rodapé; quebras simples são exibidas como nos comentários. HTML cru é ignorado; scripts e URLs de execução não são habilitados. A prévia não reproduz todos os recursos hospedados do GitHub: menções/issues não têm autocomplete ou expansão automática, sugestões são blocos de texto, anexos locais não têm upload, e recursos como Mermaid e alertas especiais não são renderizados como no GitHub. Imagens podem usar URLs já hospedadas. A edição e a prévia nunca enviam comentários; a publicação continua restrita a Aplicar tudo.

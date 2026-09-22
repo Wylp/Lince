@@ -5,6 +5,16 @@ import {
   ts,
 } from "monaco-editor/language/typescript/ts.worker";
 class ReviewWorker extends TypeScriptWorker {
+  async getDocumentHighlights(fileName, position, filesToSearch) {
+    // Monaco can deliver an old cursor request after the active graph changed.
+    const program = this._languageService.getProgram();
+    if (!program?.getSourceFile(fileName)) return [];
+    return super.getDocumentHighlights(
+      fileName,
+      position,
+      filesToSearch.filter((file) => program.getSourceFile(file)),
+    );
+  }
   reviewReferences(fileName, position) {
     return (
       this._languageService.findReferences(fileName, position) ?? []
