@@ -157,7 +157,7 @@ export const ReviewComments = forwardRef<
           <section
             className="inline-comment-form"
             aria-label="Comentário nas linhas selecionadas"
-            onKeyDown={(e) => {
+            onKeyDownCapture={(e) => {
               e.stopPropagation();
               if (e.key === "Escape" && !busy) setTarget(null);
             }}

@@ -1804,3 +1804,48 @@ test("type attention uses inferred unions and usages carry local review states",
     .click();
   await expect(page.locator(".file-heading")).toContainText("src/service.ts");
 });
+
+test("comment drag from diff signs selects whole lines without selecting text", async ({
+  page,
+}) => {
+  await open(page);
+  const editor = page.locator(".editor.modified");
+  const numbers = editor.locator(".line-numbers");
+  await numbers.filter({ hasText: /^4$/ }).hover();
+  const start = await numbers.filter({ hasText: /^4$/ }).boundingBox();
+  const end = await numbers.filter({ hasText: /^8$/ }).boundingBox();
+  // The +/- decoration column, immediately after the line number.
+  await page.mouse.move(
+    start!.x + start!.width + 5,
+    start!.y + start!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(end!.x + end!.width + 180, end!.y + end!.height / 2, {
+    steps: 10,
+  });
+  await expect(editor.locator(".comment-range-selection")).not.toHaveCount(0);
+  await expect(editor.locator(".selected-text")).toHaveCount(0);
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("");
+  await page.mouse.up();
+  const form = page.getByRole("region", {
+    name: "Comentário nas linhas selecionadas",
+  });
+  await expect(form).toContainText("head · linhas 4–8");
+  await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await expect(editor).not.toHaveClass(/comment-line-dragging/);
+  // Ordinary selection inside code still works for copying.
+  const line = await editor
+    .locator(".view-line")
+    .filter({ hasText: "const line1" })
+    .first()
+    .boundingBox();
+  await page.mouse.move(line!.x + 10, line!.y + line!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(line!.x + 150, line!.y + line!.height / 2, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(editor.locator(".selected-text")).not.toHaveCount(0);
+  await expect(form).toHaveCount(0);
+});

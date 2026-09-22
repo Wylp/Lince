@@ -2656,3 +2656,10 @@ progress::-webkit-progress-value {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.monaco-editor.comment-line-dragging,
+.monaco-editor.comment-line-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: crosshair !important;
+}

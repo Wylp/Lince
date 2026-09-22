@@ -161,7 +161,17 @@ export function CodeEditor({
             },
           ]);
         };
+        const dom = ed.getDomNode()!;
         const down = (event: MouseEvent) => {
+          if (!(event.target instanceof Node) || !dom.contains(event.target))
+            return;
+          if (
+            event.target instanceof Element &&
+            event.target.closest(
+              ".codicon-folding-expanded, .codicon-folding-collapsed, .inline-comment-form",
+            )
+          )
+            return;
           const target = ed.getTargetAtClientPoint(
             event.clientX,
             event.clientY,
@@ -173,12 +183,16 @@ export function CodeEditor({
             ![
               monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
               monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+              monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
             ].includes(target.type)
           )
             return;
           event.preventDefault();
-          event.stopPropagation();
+          event.stopImmediatePropagation();
           ed.focus();
+          window.getSelection()?.removeAllRanges();
+          ed.setPosition({ lineNumber: target.position.lineNumber, column: 1 });
+          dom.classList.add("comment-line-dragging");
           const n = target.position.lineNumber;
           const hunk = callbacks.current.commentable![side].find(
             (r) => n >= r.startLine && n <= r.line,
@@ -188,17 +202,22 @@ export function CodeEditor({
         };
         const move = (event: MouseEvent) => {
           if (!drag) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
           const n = ed.getTargetAtClientPoint(event.clientX, event.clientY)
             ?.position?.lineNumber;
           if (!n) return;
           drag.end = Math.max(drag.hunk.startLine, Math.min(n, drag.hunk.line));
           paint();
         };
-        const dom = ed.getDomNode()!;
-        dom.addEventListener("mousedown", down, true);
+        window.addEventListener("pointerdown", down, true);
+        window.addEventListener("mousedown", down, true);
+        window.addEventListener("pointermove", move, true);
         window.addEventListener("mousemove", move, true);
         releaseHandlers.push(() => {
-          dom.removeEventListener("mousedown", down, true);
+          window.removeEventListener("pointerdown", down, true);
+          window.removeEventListener("mousedown", down, true);
+          window.removeEventListener("pointermove", move, true);
           window.removeEventListener("mousemove", move, true);
         });
         commentListeners.push(
@@ -222,20 +241,35 @@ export function CodeEditor({
             );
           }),
         );
-        const release = () => {
+        const release = (event: MouseEvent) => {
           if (!drag) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
           const range = {
             startLine: Math.min(drag.start, drag.end),
             line: Math.max(drag.start, drag.end),
           };
           drag = null;
+          dom.classList.remove("comment-line-dragging");
           selection.clear();
           callbacks.current.onComment?.(side, range);
         };
-        window.addEventListener("mouseup", release);
-        releaseHandlers.push(() =>
-          window.removeEventListener("mouseup", release),
-        );
+        const cancel = () => {
+          drag = null;
+          dom.classList.remove("comment-line-dragging");
+          selection.clear();
+        };
+        window.addEventListener("pointerup", release, true);
+        window.addEventListener("mouseup", release, true);
+        window.addEventListener("pointercancel", cancel);
+        window.addEventListener("blur", cancel);
+        releaseHandlers.push(() => {
+          window.removeEventListener("pointerup", release, true);
+          window.removeEventListener("mouseup", release, true);
+          window.removeEventListener("pointercancel", cancel);
+          window.removeEventListener("blur", cancel);
+          cancel();
+        });
         commentListeners.push(
           ed.addAction({
             id: "lince.comment",
